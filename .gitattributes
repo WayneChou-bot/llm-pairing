@@ -1,0 +1,8 @@
+# The cloud repo is authoritative and the byte is the unit of truth:
+# catalog snapshots are hash-pinned over their EXACT on-disk bytes, and
+# archived real-config fixtures are provenance-hashed the same way.
+# Git newline translation (core.autocrlf) silently rewrites those bytes
+# at checkout (field incident 2026-08-18: a checked-out LF snapshot came
+# back CRLF and tripped the demo integrity gate). Disable conversion for
+# every file, in both directions, for every clone.
+* -text

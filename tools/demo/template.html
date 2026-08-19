@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM pairing — 硬體 × 模型配對 Demo</title>
+<style>
+/* ---------- palette roles (reference palette; light + dark selected) ---------- */
+.viz-root {
+  color-scheme: light;
+  --surface-1:#fcfcfb; --page:#f9f9f7;
+  --ink-1:#0b0b0b; --ink-2:#52514e; --ink-muted:#898781;
+  --grid:#e1e0d9; --baseline:#c3c2b7; --ring:rgba(11,11,11,.10);
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
+  --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --critical:#d03b3b;
+  --good-text:#006300;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1:#1a1a19; --page:#0d0d0d;
+    --ink-1:#ffffff; --ink-2:#c3c2b7; --ink-muted:#898781;
+    --grid:#2c2c2a; --baseline:#383835; --ring:rgba(255,255,255,.10);
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+    --good-text:#0ca30c;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1:#1a1a19; --page:#0d0d0d;
+  --ink-1:#ffffff; --ink-2:#c3c2b7; --ink-muted:#898781;
+  --grid:#2c2c2a; --baseline:#383835; --ring:rgba(255,255,255,.10);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+  --good-text:#0ca30c;
+}
+/* ---------- base ---------- */
+* { box-sizing:border-box; }
+html,body { margin:0; padding:0; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
+  background:var(--page); color:var(--ink-1); line-height:1.55;
+}
+.wrap { max-width:1180px; margin:0 auto; padding:20px 22px 60px; }
+h1 { font-size:21px; margin:0; letter-spacing:.2px; }
+h1 small { color:var(--ink-muted); font-weight:400; font-size:13px; margin-left:10px; }
+.sub { color:var(--ink-2); font-size:13px; margin:6px 0 0; }
+.tierbadge {
+  display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--ink-2);
+  border:1px solid var(--ring); border-radius:999px; padding:3px 10px; background:var(--surface-1);
+}
+.tierbadge b { color:var(--ink-1); font-weight:600; }
+header.viz-root { display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;
+  justify-content:space-between; background:transparent; }
+/* ---------- boot overlay ---------- */
+#boot {
+  position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center;
+  background:var(--page); transition:opacity .45s ease;
+}
+#boot.done { opacity:0; pointer-events:none; }
+.bootcard { width:min(460px,88vw); background:var(--surface-1); border:1px solid var(--ring);
+  border-radius:14px; padding:28px 30px; box-shadow:0 8px 30px rgba(0,0,0,.08); }
+.bootcard h2 { margin:0 0 4px; font-size:16px; }
+.bootcard .note { font-size:12px; color:var(--ink-muted); margin:0 0 18px; }
+.bstep { display:flex; align-items:center; gap:10px; font-size:13px; color:var(--ink-muted);
+  margin:10px 0; transition:color .3s; }
+.bstep.on { color:var(--ink-1); }
+.bstep.ok  { color:var(--ink-2); }
+.bstep .dot { width:8px; height:8px; border-radius:50%; background:var(--grid); flex:none; transition:background .3s; }
+.bstep.on .dot { background:var(--s1); animation:pulse 1s infinite; }
+.bstep.ok .dot { background:var(--good); animation:none; }
+@keyframes pulse { 50% { opacity:.35; } }
+.pbar { height:6px; border-radius:3px; background:var(--grid); overflow:hidden; margin-top:18px; }
+.pbar > i { display:block; height:100%; width:0%; border-radius:3px; background:var(--s1);
+  transition:width .35s ease; }
+.bskip { margin-top:14px; text-align:right; }
+.bskip button { font-size:12px; color:var(--ink-muted); background:none; border:none; cursor:pointer; }
+.bskip button:hover { color:var(--ink-1); text-decoration:underline; }
+@media (prefers-reduced-motion: reduce) {
+  #boot { display:none; }
+  * { animation:none !important; transition:none !important; }
+}
+/* ---------- recommendation cards (review UI item: recommendation first) ---------- */
+.reco { margin-top:20px; }
+.recohead { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+.recohead .t { font-size:14.5px; font-weight:700; }
+.cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
+.card { text-align:left; font:inherit; background:var(--surface-1); border:1px solid var(--ring);
+  border-radius:12px; padding:14px 16px; cursor:pointer; display:flex; flex-direction:column;
+  gap:6px; transition:transform .12s ease, box-shadow .12s, border-color .12s; }
+.card:hover, .card:focus-visible { border-color:var(--baseline); transform:translateY(-2px);
+  box-shadow:0 6px 18px rgba(0,0,0,.08); outline:none; }
+.card .kind { font-size:12px; font-weight:700; color:var(--ink-2);
+  display:flex; gap:6px; align-items:center; }
+.card .mname { font-size:15.5px; font-weight:700; line-height:1.3; word-break:break-word; }
+.card .mspec { font-size:12px; color:var(--ink-muted); }
+.card .why { font-size:12.5px; color:var(--ink-2); }
+.card .cav { font-size:11.5px; color:var(--ink-muted); }
+.reconotes { font-size:12px; color:var(--ink-muted); margin-top:10px; }
+details.adv { margin-top:26px; }
+details.adv > summary { cursor:pointer; font-size:13.5px; font-weight:600; color:var(--ink-2);
+  padding:10px 14px; background:var(--surface-1); border:1px solid var(--ring);
+  border-radius:12px; }
+details.adv > summary:hover { color:var(--ink-1); border-color:var(--baseline); }
+/* ---------- filter row ---------- */
+.filters { display:flex; flex-wrap:wrap; gap:18px; align-items:center; margin:22px 0 14px;
+  padding:12px 14px; background:var(--surface-1); border:1px solid var(--ring); border-radius:12px; }
+.fgroup { display:flex; align-items:center; gap:8px; }
+.fgroup .lbl { font-size:12px; color:var(--ink-muted); }
+.chip {
+  font-size:13px; padding:5px 12px; border-radius:999px; cursor:pointer;
+  border:1px solid var(--ring); background:transparent; color:var(--ink-2);
+}
+.chip:hover { color:var(--ink-1); border-color:var(--baseline); }
+.chip.sel { background:var(--s1); border-color:var(--s1); color:#fff; font-weight:600; }
+.spacer { flex:1; }
+/* ---------- matrix ---------- */
+.matrixcard { background:var(--surface-1); border:1px solid var(--ring); border-radius:12px;
+  padding:6px 8px 10px; overflow-x:auto; }
+table.matrix { border-collapse:separate; border-spacing:0; width:100%; min-width:860px; }
+.matrix th, .matrix td { padding:8px 8px; text-align:left; font-size:13px; }
+.matrix thead th { color:var(--ink-2); font-weight:600; border-bottom:1px solid var(--grid);
+  vertical-align:bottom; }
+.matrix thead .q { color:var(--ink-muted); font-weight:400; font-size:11.5px; display:block; }
+.matrix tbody th { font-weight:600; color:var(--ink-1); border-bottom:1px solid var(--grid);
+  min-width:150px; }
+.matrix tbody th .hwsub { display:block; font-size:11.5px; color:var(--ink-muted); font-weight:400; }
+.matrix tbody td { border-bottom:1px solid var(--grid); }
+.cell {
+  display:flex; flex-direction:column; gap:3px; border:1px solid transparent;
+  border-radius:9px; padding:7px 9px; cursor:pointer; min-width:108px;
+  transition:transform .12s ease, border-color .12s, box-shadow .12s; background:transparent;
+  font:inherit; text-align:left; width:100%;
+}
+.cell:hover, .cell:focus-visible { border-color:var(--baseline); transform:translateY(-1px);
+  box-shadow:0 3px 10px rgba(0,0,0,.07); outline:none; }
+.vchip { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; }
+.vchip .ic { width:15px; height:15px; border-radius:50%; display:inline-flex; align-items:center;
+  justify-content:center; color:#fff; font-size:10px; font-weight:700; flex:none; }
+.cellsub { font-size:11.5px; color:var(--ink-muted); }
+.v-FITS .ic{background:var(--good);} .v-FITS .vt{color:var(--good-text);}
+.v-RAM_ONLY .ic{background:var(--good);} .v-RAM_ONLY .vt{color:var(--good-text);}
+.v-TIGHT .ic{background:var(--warn);color:#4a3400;} .v-TIGHT .vt{color:var(--ink-1);}
+.v-PARTIAL_OFFLOAD .ic{background:var(--serious);} .v-PARTIAL_OFFLOAD .vt{color:var(--ink-1);}
+.v-OOM_AT_CONTEXT .ic{background:var(--critical);} .v-OOM_AT_CONTEXT .vt{color:var(--ink-1);}
+.v-OOM_AT_LOAD .ic{background:var(--critical);} .v-OOM_AT_LOAD .vt{color:var(--ink-1);}
+.v-UNSUPPORTED .ic{background:var(--baseline);} .v-UNSUPPORTED .vt{color:var(--ink-muted);}
+/* ---------- legend ---------- */
+.legend { display:flex; flex-wrap:wrap; gap:14px; margin:12px 2px 0; font-size:12px; color:var(--ink-2); }
+.legend .vchip { font-weight:400; font-size:12px; }
+/* ---------- drawer ---------- */
+#ovl { position:fixed; inset:0; background:rgba(0,0,0,.28); opacity:0; pointer-events:none;
+  transition:opacity .25s; z-index:60; }
+#ovl.open { opacity:1; pointer-events:auto; }
+#drawer {
+  position:fixed; top:0; right:0; bottom:0; width:min(480px,94vw); z-index:70;
+  background:var(--surface-1); border-left:1px solid var(--ring);
+  box-shadow:-12px 0 40px rgba(0,0,0,.15); transform:translateX(102%);
+  transition:transform .3s cubic-bezier(.2,.8,.25,1); overflow-y:auto; padding:22px 24px 40px;
+}
+#drawer.open { transform:none; }
+#drawer h3 { margin:0; font-size:16px; }
+#drawer .dsub { color:var(--ink-muted); font-size:12.5px; margin:2px 0 14px; }
+#dclose { position:absolute; top:14px; right:14px; border:1px solid var(--ring); background:none;
+  color:var(--ink-2); border-radius:8px; width:30px; height:30px; cursor:pointer; font-size:14px; }
+#dclose:hover { color:var(--ink-1); border-color:var(--baseline); }
+.dverdict { display:flex; align-items:center; gap:10px; margin:14px 0 4px; }
+.dverdict .ic { width:22px; height:22px; border-radius:50%; display:inline-flex; align-items:center;
+  justify-content:center; color:#fff; font-size:13px; font-weight:700; }
+.dverdict .name { font-size:17px; font-weight:700; }
+.dexplain { font-size:13px; color:var(--ink-2); margin:4px 0 18px; }
+.stats { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:0 0 20px; }
+.stat { border:1px solid var(--ring); border-radius:10px; padding:10px 12px; }
+.stat .k { font-size:11.5px; color:var(--ink-muted); }
+.stat .v { font-size:19px; font-weight:650; margin-top:2px; }
+.stat .v small { font-size:12px; color:var(--ink-muted); font-weight:400; }
+.sechead { font-size:12px; color:var(--ink-muted); letter-spacing:.4px; margin:20px 0 8px;
+  text-transform:uppercase; }
+/* stacked demand bar */
+.stackwrap { position:relative; margin:22px 0 26px; }
+.stack { display:flex; gap:2px; height:26px; border-radius:5px; overflow:visible; }
+.stack .seg { height:100%; border-radius:4px; min-width:2px;
+  transition:width .6s cubic-bezier(.2,.8,.3,1); }
+.seg.w{background:var(--s1);} .seg.kv{background:var(--s2);}
+.seg.act{background:var(--s3);} .seg.lg{background:var(--s4);}
+.budgetline { position:absolute; top:-6px; bottom:-6px; width:0; border-left:2px solid var(--ink-1); }
+.budgetline .tag { position:absolute; top:-16px; left:-4px; transform:translateX(-50%);
+  font-size:10.5px; color:var(--ink-2); white-space:nowrap; }
+.axisnote { font-size:11px; color:var(--ink-muted); margin-top:20px; }
+.stacklegend { display:flex; flex-wrap:wrap; gap:12px; margin-top:10px; font-size:12px; color:var(--ink-2); }
+.sw { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
+table.dt { width:100%; border-collapse:collapse; font-size:12.5px; margin-top:8px; }
+.dt th { text-align:left; color:var(--ink-muted); font-weight:500; border-bottom:1px solid var(--grid);
+  padding:4px 6px; }
+.dt td { border-bottom:1px solid var(--grid); padding:4px 6px;
+  font-variant-numeric:tabular-nums; }
+.dt td:last-child, .dt th:last-child { text-align:right; }
+/* tradeoff strip */
+.tstrip { display:flex; gap:2px; margin-top:6px; }
+.tcell { flex:1; border-radius:5px; padding:7px 4px 6px; text-align:center; font-size:11px;
+  color:#fff; font-weight:600; }
+.tcell small { display:block; font-weight:400; font-size:10px; opacity:.9; }
+.t-FITS{background:var(--good);} .t-TIGHT{background:var(--warn);color:#4a3400;}
+.t-PARTIAL_OFFLOAD{background:var(--serious);} .t-OOM_AT_CONTEXT{background:var(--critical);}
+.t-RAM_ONLY{background:var(--good);}
+/* flags */
+.flag { display:flex; gap:8px; font-size:12.5px; color:var(--ink-2); margin:6px 0; }
+.flag code { font-size:11px; background:var(--page); border:1px solid var(--ring);
+  border-radius:5px; padding:1px 6px; color:var(--ink-1); white-space:nowrap; height:fit-content; }
+.getcmd { display:flex; gap:8px; align-items:center; margin:6px 0; }
+.getcmd code { flex:1; font-size:12px; background:var(--page); border:1px solid var(--ring);
+  border-radius:6px; padding:6px 9px; overflow-x:auto; white-space:nowrap; }
+.getcmd .copybtn { font-size:12px; padding:5px 10px; border-radius:6px; cursor:pointer;
+  border:1px solid var(--ring); background:var(--surface-1); color:var(--ink-2); flex:none; }
+.getcmd .copybtn:hover { color:var(--ink-1); border-color:var(--baseline); }
+footer { margin-top:26px; font-size:12px; color:var(--ink-muted); line-height:1.7; }
+footer code { font-size:11px; }
+.reveal { animation:fadeup .5s ease both; }
+@keyframes fadeup { from { opacity:0; transform:translateY(8px);} to { opacity:1; transform:none;} }
+</style>
+</head>
+<body class="viz-root">
+<div id="boot" class="viz-root">
+  <div class="bootcard">
+    <h2>LLM pairing</h2>
+    <p class="note" id="bootnote">展示模式：以下流程為<b>模擬動畫</b>，結果為建置時預先計算。</p>
+    <div class="bstep" id="bs0"><span class="dot"></span><span id="bs0t">載入硬體規格</span></div>
+    <div class="bstep" id="bs1"><span class="dot"></span>載入模型目錄快照</div>
+    <div class="bstep" id="bs2"><span class="dot"></span>計算 <span id="bcount">…</span> 組配對（T-002 純函式核心）</div>
+    <div class="pbar"><i id="pfill"></i></div>
+    <div class="bskip"><button id="bskip">跳過動畫 →</button></div>
+  </div>
+</div>
+
+<div class="wrap viz-root">
+  <header class="viz-root">
+    <div>
+      <h1>LLM pairing <small>硬體 × 模型配對矩陣</small></h1>
+      <p class="sub" id="subline">點任一格看記憶體分解、ctx 上限、tok/s 預測與 trade-off 曲線。</p>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <span class="tierbadge" id="tierbadge">證據等級 <b>T0 估算</b>・未經實測校準</span>
+      <button class="chip" id="themebtn" title="切換主題">🌓 主題</button>
+    </div>
+  </header>
+
+  <section class="reco viz-root" id="recosec" hidden aria-label="推薦結果">
+    <div class="recohead">
+      <span class="t">🎯 為你的機器推薦</span>
+      <span id="recotabs" role="group" aria-label="機器情境"></span>
+    </div>
+    <div class="cards" id="recocards"></div>
+    <div class="reconotes" id="reconotes"></div>
+  </section>
+
+  <details class="adv viz-root" id="advdetails">
+    <summary>進階：完整配對矩陣（所有機器 × 模型 × context × KV 精度）</summary>
+    <div class="filters viz-root" role="group" aria-label="篩選條件">
+      <div class="fgroup"><span class="lbl">目標 context</span><span id="ctxchips"></span></div>
+      <div class="fgroup"><span class="lbl">KV cache 精度</span><span id="kvchips"></span></div>
+      <div class="fgroup"><input id="msearch" type="search" placeholder="搜尋模型…"
+        aria-label="搜尋模型" style="font:inherit;font-size:13px;padding:5px 10px;border-radius:8px;
+        border:1px solid var(--ring);background:transparent;color:var(--ink-1);width:150px;"></div>
+      <div class="fgroup"><button class="chip" id="runonly" aria-pressed="false">只顯示可跑</button></div>
+      <div class="spacer"></div>
+      <span class="lbl" id="combonote" style="font-size:12px;color:var(--ink-muted)"></span>
+    </div>
+
+    <div class="matrixcard viz-root">
+      <table class="matrix" id="matrix" aria-label="硬體與模型配對結果矩陣"></table>
+    </div>
+    <div class="legend viz-root" id="legend"></div>
+  </details>
+
+  <footer class="viz-root">
+    誠實聲明：所有數值為 <b>T0（規格表估算）</b>，activation 採 [0.5, 1.5] GiB 區間上界（待 T-003 校準）；
+    白名單外的架構一律回報「尚未支援」而非猜測（R-2）。
+    <span id="fixnote">硬體與模型皆為合成 fixtures，非真實產品量測。</span><br>
+    LLM pairing・T-002 pure core・commit <code id="commit"></code>・
+    分類決策鏈 SPEC §4.4・保守優先（FA ≤ 2% 目標）
+  </footer>
+</div>
+
+<div id="ovl"></div>
+<aside id="drawer" class="viz-root" role="dialog" aria-modal="true" aria-labelledby="dtitle">
+  <button id="dclose" aria-label="關閉">✕</button>
+  <div id="dbody"></div>
+</aside>
+
+<script>
+"use strict";
+const DATA = /*__DATA__*/null;
+
+const VERDICT = {
+  FITS:            { ic:"✓", label:"可以跑",     cls:"FITS",
+    why:"記憶體充足，模型可以完整載入，這是最理想的狀態。" },
+  TIGHT:           { ic:"!", label:"勉強可跑",   cls:"TIGHT",
+    why:"塞得下，但剩餘空間不到安全緩衝（5%）——其他程式一搶記憶體就可能失敗。" },
+  PARTIAL_OFFLOAD: { ic:"◐", label:"可跑・會變慢", cls:"PARTIAL_OFFLOAD",
+    why:"模型塞不進顯示記憶體，一部分只好放到速度慢很多的一般記憶體：跑得動，但生成速度會明顯下降。旁邊的「n/m 層進 GPU」代表塞進顯卡的比例，越高越快。" },
+  OOM_AT_CONTEXT:  { ic:"⌛", label:"長文跑不動", cls:"OOM_AT_CONTEXT",
+    why:"短對話沒問題，但長文件（長 context）需要的暫存記憶體會超出容量。把 context 調低即可使用。" },
+  OOM_AT_LOAD:     { ic:"✕", label:"跑不動",     cls:"OOM_AT_LOAD",
+    why:"記憶體不足，連把模型載入都辦不到，此組合無法使用。" },
+  RAM_ONLY:        { ic:"◎", label:"可跑（無顯卡）", cls:"RAM_ONLY",
+    why:"這台機器沒有可用的顯示卡，改用一般記憶體 + CPU 運算：能跑，但速度受限。" },
+  UNSUPPORTED_ARCH:{ ic:"—", label:"尚未支援",   cls:"UNSUPPORTED",
+    why:"此模型架構尚未收錄於支援白名單，記憶體公式未經驗證。依 R-2 紀律：不知道就說不知道，不猜測。" },
+  UNSUPPORTED_TOPOLOGY:{ ic:"—", label:"拓撲不支援", cls:"UNSUPPORTED", why:"多 GPU 拓撲 v1 不支援。" },
+  UNSUPPORTED_ENGINE:{ ic:"—", label:"引擎不支援", cls:"UNSUPPORTED", why:"v1 僅支援 llama.cpp。" },
+};
+const FLAG_TEXT = {
+  ACTIVATION_PRIOR_PENDING_T003:"activation 為文獻先驗區間上界，待 T-003 實測校準",
+  IGPU_ESTIMATE_LOW_CONFIDENCE:"iGPU 共享記憶體為結構性近似，信心低（強制 T0）",
+  APPLE_WIRED_LIMIT_HEADROOM:"Apple wired limit 偏低——調整 iogpu.wired_limit_mb 可釋放更多記憶體",
+  PARTIAL_OFFLOAD_KV_APPROX:"保守近似：假設 KV cache 全部駐留 GPU（只會少報、不會多報）",
+  OFFLOAD_EMBED_UNKNOWN_CONSERVATIVE:"缺 bpw 資訊，embedding 以最保守方式估計",
+  WEIGHTS_ESTIMATED:"權重大小為反推估計（±8%），非目錄實測值",
+  CTX_TARGET_EXCEEDS_MODEL_MAX:"目標 context 超過模型宣告上限",
+  RAM_ONLY_POOL:"以系統記憶體為資源池（無加速器）",
+  RAM_ONLY_TIGHT_HEADROOM:"RAM 餘裕低於安全邊際",
+  RAM_SPILL_EXCEEDS_AVAILABLE:"溢出到一般記憶體的權重超過可用容量——連「慢慢跑」都辦不到，判為跑不動（A2）",
+  DISCRETE_GPU_DATA_UNAVAILABLE_EXCLUDED:"偵測不到這張獨立顯卡的記憶體數據（探測待補），已把它排除、以其餘資源保守評估",
+  UBATCH_NOT_YET_MODELED:"ubatch 設定目前不影響計算——顯示出來以免誤以為已生效",
+  MACHINE_CALIBRATED:"速度以本機實測校準（T1）",
+  CALIBRATION_POOL_MISMATCH_IGNORED:"校準量測的記憶體池與此情境不同，未套用（嚴格池比對）",
+  PARTIAL_OFFLOAD_HARMONIC:"部分卸載採調和平均模型：落在一般記憶體的層會拖慢整體",
+  PREFILL_LOW_CONFIDENCE:"prefill（讀入長文）速度為低信心估計，僅供參考",
+  LOOKUP_PARAMS_TRAFFIC_EXCLUDED:"查表型參數（如 PLE）不計入每 token 讀取量（A5，經實測校準佐證）",
+  KV_SHARED_TRAILING_LAYERS_FROM_CONFIG:"共享 KV 尾層依 config 排除（A3）",
+  NVIDIA_SMI_PARSER_UNVERIFIED_ON_REAL_HW:"NVIDIA 顯卡數據以文件記載格式解析，尚未在真實 N 卡驗證——結論請保守看待，歡迎回報實測",
+};
+/* Review batch 1: every catalog/probe-derived string (model id, quant
+   label, license, machine label/GPU name, mapping notes) passes through
+   esc() before entering innerHTML — a hostile HF repo name must render as
+   text, never as markup. */
+const esc = s => String(s).replace(/[&<>"']/g,
+  ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+const GIB = 1024**3, MIB = 1024**2;
+const fmtG = b => b==null ? "—"
+  : b < GIB/16 ? (b/MIB).toFixed(1).replace(/\.0$/,"") + " MiB"
+  : (b/GIB).toFixed(2).replace(/\.00$/,"") + " GiB";
+const fmtCtx = c => c==null ? "—"
+  : (c>=1024 && c%1024===0) ? (c/1024)+"K" : c.toLocaleString();
+
+let sel = { ctx: DATA.ctx_options[1], kv: DATA.kv_options[0], q:"", runOnly:false };
+const RUNNABLE = new Set(["FITS","TIGHT","RAM_ONLY","PARTIAL_OFFLOAD"]);
+function visibleModels(){
+  let ms=DATA.models;
+  if(sel.q){ const q=sel.q.toLowerCase();
+    ms=ms.filter(m=>(m.label+" "+m.quant+" "+(m.arch||"")).toLowerCase().includes(q)); }
+  if(sel.runOnly){
+    ms=ms.filter(m=>DATA.hardware.some(h=>{
+      const r=DATA.results[`${h.id}|${m.id}|${sel.ctx}|${sel.kv}`];
+      return r&&RUNNABLE.has(r.v);
+    }));
+  }
+  return ms;
+}
+
+/* ---------- boot animation ---------- */
+(function boot(){
+  const bootEl = document.getElementById("boot");
+  document.getElementById("bcount").textContent = DATA.combo_count;
+  // review batch 1: the boot/footer wording follows what was actually
+  // baked in — no more claiming「合成 fixtures」over a real scan
+  const hasReal = DATA.hardware.some(h=>h.real);
+  const synthCat = DATA.catalog === "synthetic";
+  document.getElementById("bs0t").textContent =
+    hasReal ? "載入真實掃描的硬體規格" : "載入合成硬體 fixtures（非真實偵測）";
+  document.getElementById("bootnote").innerHTML =
+    hasReal || !synthCat
+      ? "展示模式：以下流程為<b>模擬動畫</b>；配對結果來自建置時的"
+        + (hasReal ? "真實硬體掃描" : "合成硬體 fixtures")
+        + (synthCat ? "與合成模型 fixtures。" : "與模型目錄快照。")
+      : "展示模式：以下流程為<b>模擬動畫</b>，資料為預先計算的合成 fixtures（非真實偵測）。";
+  let skipSaved=false;
+  try{ skipSaved = localStorage.getItem("llmp_skip_boot")==="1"; }catch(e){}
+  if (skipSaved || matchMedia("(prefers-reduced-motion: reduce)").matches) { bootEl.remove(); return; }
+  const steps=[document.getElementById("bs0"),document.getElementById("bs1"),document.getElementById("bs2")];
+  const fill=document.getElementById("pfill");
+  const t=[ [0,0],[150,8],[650,34],[700,36],[1150,66],[1250,70],[1900,100] ];
+  let timers=[];
+  const plan=[ [0,()=>steps[0].classList.add("on")],
+    [620,()=>{steps[0].classList.replace("on","ok");steps[0].querySelector(".dot");steps[1].classList.add("on");}],
+    [1180,()=>{steps[1].classList.replace("on","ok");steps[2].classList.add("on");}],
+    [1880,()=>{steps[2].classList.replace("on","ok");}],
+    [2150,()=>bootEl.classList.add("done")],
+    [2650,()=>bootEl.remove()] ];
+  t.forEach(([ms,pct])=>timers.push(setTimeout(()=>fill.style.width=pct+"%",ms)));
+  plan.forEach(([ms,fn])=>timers.push(setTimeout(fn,ms)));
+  document.getElementById("bskip").onclick=()=>{ timers.forEach(clearTimeout); bootEl.remove();
+    try{ localStorage.setItem("llmp_skip_boot","1"); }catch(e){} };
+})();
+
+/* ---------- theme toggle: auto -> light -> dark ---------- */
+(function theme(){
+  const order=["auto","light","dark"]; let i=0;
+  const btn=document.getElementById("themebtn");
+  btn.onclick=()=>{ i=(i+1)%3; const m=order[i];
+    if(m==="auto") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme=m;
+    btn.textContent = m==="auto"?"🌓 主題":(m==="light"?"☀️ 亮色":"🌙 暗色");
+  };
+})();
+
+/* ---------- filters ---------- */
+function chipRow(elId, options, get, set, fmt){
+  const el=document.getElementById(elId); el.innerHTML="";
+  options.forEach(o=>{
+    const b=document.createElement("button");
+    b.className="chip"+(get()===o?" sel":""); b.textContent=fmt(o);
+    b.setAttribute("aria-pressed", get()===o ? "true" : "false");
+    b.onclick=()=>{ set(o); render(); };
+    el.appendChild(b);
+  });
+}
+function renderFilters(){
+  chipRow("ctxchips", DATA.ctx_options, ()=>sel.ctx, v=>sel.ctx=v, fmtCtx);
+  chipRow("kvchips", DATA.kv_options, ()=>sel.kv, v=>sel.kv=v, s=>s);
+  const shown=visibleModels().length;
+  document.getElementById("combonote").textContent =
+    `顯示 ${DATA.hardware.length}×${shown}${shown!==DATA.models.length?`（已篩選，全部 ${DATA.models.length} 欄）`:""} / 共 ${DATA.combo_count} 組預計算結果`;
+  const ro=document.getElementById("runonly");
+  ro.classList.toggle("sel", sel.runOnly);
+  ro.setAttribute("aria-pressed", String(sel.runOnly));
+}
+document.getElementById("msearch").addEventListener("input", e=>{ sel.q=e.target.value.trim(); render(); });
+document.getElementById("runonly").addEventListener("click", ()=>{ sel.runOnly=!sel.runOnly; render(); });
+
+/* ---------- recommendation cards ---------- */
+const KIND = {
+  CAPABILITY:  { ic:"🏆", label:"能力優先" },
+  SPEED:       { ic:"⚡", label:"速度優先" },
+  LONG_CONTEXT:{ ic:"📜", label:"長文優先" },
+};
+let recoSel = null;
+function recoMachines(){
+  return DATA.hardware.filter(h=>h.real && DATA.recommend && DATA.recommend[h.id]);
+}
+function renderReco(){
+  const ms = recoMachines();
+  const sec = document.getElementById("recosec");
+  if(!ms.length){
+    // demo mode (no real scan): matrix is the main view
+    document.getElementById("advdetails").open = true;
+    return;
+  }
+  sec.hidden = false;
+  if(recoSel===null || !ms.some(m=>m.id===recoSel)) recoSel = ms[0].id;
+  const tabs = document.getElementById("recotabs"); tabs.innerHTML="";
+  if(ms.length>1) ms.forEach(m=>{
+    const b=document.createElement("button");
+    b.className="chip"+(m.id===recoSel?" sel":""); b.textContent=m.label;
+    b.setAttribute("aria-pressed", m.id===recoSel ? "true" : "false");
+    b.onclick=()=>{ recoSel=m.id; renderReco(); };
+    tabs.appendChild(b);
+  });
+  const rec = DATA.recommend[recoSel];
+  const cards = document.getElementById("recocards"); cards.innerHTML="";
+  rec.picks.forEach(p=>{
+    const k = KIND[p.kind] || { ic:"·", label:p.kind };
+    const v = VERDICT[p.verdict] || VERDICT.UNSUPPORTED_ARCH;
+    const b = document.createElement("button");
+    b.className = "card";
+    b.setAttribute("aria-label",
+      `${k.label}：${p.label} ${p.quant}，點擊看完整記憶體分解`);
+    const tps = p.tps!=null
+      ? `<span class="mspec">預估 ~${p.tps} tok/s（證據等級 ${esc(p.tps_tier||"T0")}）</span>`
+      : "";
+    b.innerHTML = `
+      <span class="kind">${k.ic} ${k.label}</span>
+      <span class="mname">${esc(p.label)}</span>
+      <span class="mspec">${esc(p.quant)}・${p.weights_gib??"?"} GiB・active ${p.params_active_b}B・context ${fmtCtx(p.ctx)}</span>
+      <span class="vchip v-${v.cls}"><span class="ic">${v.ic}</span><span class="vt">${v.label}</span></span>
+      ${tps}
+      <span class="why">${esc(p.reason)}</span>
+      ${(p.caveats||[]).map(c=>`<span class="cav">⚠ ${esc(c)}</span>`).join("")}`;
+    b.onclick = ()=>openDrawer(p.key);
+    cards.appendChild(b);
+  });
+  const notes = document.getElementById("reconotes");
+  notes.innerHTML = (rec.notes||[]).map(n=>`· ${esc(n)}`).join("<br>");
+}
+
+/* ---------- matrix ---------- */
+function cellSub(r){
+  if(!r) return "";
+  const tps = r.tps!=null ? `・~${r.tps} tok/s` : "";
+  switch(r.v){
+    case "FITS": case "RAM_ONLY": return "餘裕 "+fmtG(r.headroom)+tps;
+    case "TIGHT": return "餘裕僅 "+fmtG(r.headroom)+tps;
+    case "PARTIAL_OFFLOAD": return `${r.g}/${r.n_layers} 層進 GPU${tps}`;
+    case "OOM_AT_CONTEXT": return "ctx 上限 "+fmtCtx(r.ctx_max);
+    case "OOM_AT_LOAD": return "超出 "+fmtG(r.demand-(r.budget+r.safety));
+    default: return "尚未支援";
+  }
+}
+function render(){
+  renderFilters();
+  const models=visibleModels();
+  const tbl=document.getElementById("matrix");
+  let html="<thead><tr><th scope='col'>硬體 \\ 模型</th>";
+  models.forEach(m=>{
+    const lic = m.license ? `・${esc(m.license)}` : "";
+    html+=`<th scope='col'>${esc(m.label)}<span class='q'>${esc(m.quant)}・${m.weights_gib??"?"} GiB${lic}</span></th>`;
+  });
+  html+="</tr></thead><tbody>";
+  DATA.hardware.forEach(h=>{
+    const real = h.real ? "🔍 真實掃描・" : "";
+    const spec = `${real}${esc(h.topology)}・RAM ${h.ram_gib} GiB（可用 ${h.avail_gib}）`;
+    html+=`<tr><th scope='row'>${esc(h.label)}<span class='hwsub'>${spec}</span></th>`;
+    models.forEach(m=>{
+      const key=`${h.id}|${m.id}|${sel.ctx}|${sel.kv}`;
+      const r=DATA.results[key];
+      const v=VERDICT[r.v]||VERDICT.UNSUPPORTED_ARCH;
+      html+=`<td><button class="cell v-${v.cls}" data-key="${esc(key)}"
+        aria-label="${esc(h.label)} × ${esc(m.label)} ${esc(m.quant)}：${v.label}">
+        <span class="vchip"><span class="ic">${v.ic}</span><span class="vt">${v.label}</span></span>
+        <span class="cellsub">${cellSub(r)}</span></button></td>`;
+    });
+    html+="</tr>";
+  });
+  html+="</tbody>";
+  tbl.innerHTML=html;
+  tbl.querySelectorAll(".cell").forEach(c=>c.onclick=()=>openDrawer(c.dataset.key));
+  const lg=document.getElementById("legend");
+  lg.innerHTML="";
+  ["FITS","TIGHT","PARTIAL_OFFLOAD","OOM_AT_CONTEXT","OOM_AT_LOAD","RAM_ONLY","UNSUPPORTED_ARCH"].forEach(k=>{
+    const v=VERDICT[k];
+    lg.innerHTML+=`<span class="vchip v-${v.cls}"><span class="ic">${v.ic}</span>${v.label}</span>`;
+  });
+}
+
+/* ---------- drawer ---------- */
+function openDrawer(key){
+  const [hwId,mId,ctx,kv]=key.split("|");
+  const h=DATA.hardware.find(x=>x.id===hwId), m=DATA.models.find(x=>x.id===mId);
+  const r=DATA.results[key]; const v=VERDICT[r.v]||VERDICT.UNSUPPORTED_ARCH;
+  const body=document.getElementById("dbody");
+  let html=`<h3 id="dtitle">${esc(h.label)} × ${esc(m.label)} <span style="color:var(--ink-muted)">${esc(m.quant)}</span></h3>
+  <p class="dsub">目標 context ${fmtCtx(+ctx)}・KV ${kv}・${m.params_b}B 參數${m.active_b!==m.params_b?`（active ${m.active_b}B）`:""}・證據等級 ${r.tier??"T0"}</p>
+  <div class="dverdict v-${v.cls}"><span class="ic">${v.ic}</span><span class="name vt">${v.label}</span>
+    <span style="font-size:12px;color:var(--ink-muted)">${r.v}</span></div>
+  <p class="dexplain">${v.why}</p>`;
+
+  if(r.budget!=null){
+    const bNo=r.budget+r.safety;
+    const scaleMax=Math.max(r.demand,bNo)*1.06;
+    const pct=x=>(x/scaleMax*100).toFixed(2)+"%";
+    html+=`<div class="stats">
+      <div class="stat"><div class="k">可用預算（物理）</div><div class="v">${fmtG(bNo)}</div></div>
+      <div class="stat"><div class="k">總需求（保守端）</div><div class="v">${fmtG(r.demand)}</div></div>
+      <div class="stat"><div class="k">全 GPU 可行的 ctx 上限</div>
+        <div class="v">${r.ctx_max>0?`${fmtCtx(r.ctx_max)} <small>tokens</small>`:"— <small>全上 GPU 不可行</small>"}</div></div>
+      <div class="stat"><div class="k">${r.g!=null?"可上 GPU 層數":"headroom"}</div>
+        <div class="v">${r.g!=null?`${r.g} <small>/ ${r.n_layers} 層</small>`:fmtG(r.headroom)}</div></div>
+    </div>
+    <div class="sechead">記憶體需求分解 vs 預算</div>
+    <div class="stackwrap">
+      <div class="stack" role="img" aria-label="需求堆疊條，數值見下方表格">
+        <span class="seg w"   style="width:0" data-w="${pct(r.w)}"></span>
+        <span class="seg kv"  style="width:0" data-w="${pct(r.kv)}"></span>
+        <span class="seg act" style="width:0" data-w="${pct(r.act)}"></span>
+        <span class="seg lg"  style="width:0" data-w="${pct(Math.max(r.logits, scaleMax*0.004))}"></span>
+      </div>
+      <span class="budgetline" style="left:${pct(r.budget)}"><span class="tag">安全預算 ${fmtG(r.budget)}</span></span>
+      <span class="budgetline" style="left:${pct(bNo)}; opacity:.55"><span class="tag" style="top:auto;bottom:-18px">物理上限 ${fmtG(bNo)}</span></span>
+    </div>
+    <div class="stacklegend">
+      <span><i class="sw" style="background:var(--s1)"></i>權重 ${fmtG(r.w)}</span>
+      <span><i class="sw" style="background:var(--s2)"></i>KV cache ${fmtG(r.kv)}</span>
+      <span><i class="sw" style="background:var(--s3)"></i>activation ${fmtG(r.act)}</span>
+      <span><i class="sw" style="background:var(--s4)"></i>logits ${fmtG(r.logits)}</span>
+    </div>
+    <table class="dt"><thead><tr><th>項目</th><th>來源</th><th>bytes</th></tr></thead><tbody>
+      <tr><td>權重</td><td>目錄檔案大小</td><td>${r.w.toLocaleString()}</td></tr>
+      <tr><td>KV cache（${fmtCtx(+ctx)}）</td><td>公式精確值</td><td>${r.kv.toLocaleString()}</td></tr>
+      <tr><td>activation</td><td>先驗上界</td><td>${r.act.toLocaleString()}</td></tr>
+      <tr><td>logits</td><td>vocab × 4</td><td>${r.logits.toLocaleString()}</td></tr>
+      <tr><td><b>總需求</b></td><td>保守端</td><td><b>${r.demand.toLocaleString()}</b></td></tr>
+      <tr><td>可用預算（含安全邊際）</td><td>§4.1</td><td>${r.budget.toLocaleString()}</td></tr>
+    </tbody></table>`;
+    if(r.curve && r.curve.length){
+      html+=`<div class="sechead">Trade-off：不同 context 的判定</div><div class="tstrip">`;
+      r.curve.forEach(([c,cv])=>{
+        const tv=VERDICT[cv]||VERDICT.UNSUPPORTED_ARCH;
+        html+=`<span class="tcell t-${cv}" title="${tv.label}">${fmtCtx(c)}<small>${tv.label}</small></span>`;
+      });
+      html+=`</div>`;
+    }
+    if(r.tps!=null){
+      const spd = r.calibrated
+        ? `速度預測（<b>T1・本機實測校準</b>，ci 為量測離散）`
+        : `速度預測（T0・η 未校準，ci 為 η 區間）`;
+      html+=`<div class="sechead">${spd}</div>
+      <div class="stats">
+        <div class="stat"><div class="k">decode @ 目標 ctx</div>
+          <div class="v">~${r.tps} <small>tok/s（${r.tps_lo}–${r.tps_hi}）</small></div></div>
+        <div class="stat"><div class="k">衰減曲線</div><div class="v">${sparkline(r.decay)}</div></div>
+      </div>`;
+      if((r.flags||[]).includes("PARTIAL_OFFLOAD_HARMONIC"))
+        html+=`<p class="dexplain">⚠ 部分卸載調和模型：落在 CPU 的層拖慢整體——這就是「少一點記憶體、慢好幾倍」的懸崖。</p>`;
+    } else if(r.tps_note){
+      html+=`<div class="sechead">速度預測</div>
+      <p class="dexplain">${esc(r.tps_note)}——依 R-2 紀律不以「同世代平均」猜測。</p>`;
+    }
+  }
+  if(m.repo){
+    const oll=`ollama run hf.co/${m.repo}:${m.quant}`;
+    const lcp=`llama-server -hf ${m.repo}:${m.quant}`;
+    html+=`<div class="sechead">取得這個模型</div>
+      <div class="getcmd"><code>${esc(oll)}</code><button class="copybtn" data-copy="${esc(oll)}">複製</button></div>
+      <div class="getcmd"><code>${esc(lcp)}</code><button class="copybtn" data-copy="${esc(lcp)}">複製</button></div>
+      <p class="axisnote">來源 repo：<a href="https://huggingface.co/${esc(m.repo)}" target="_blank" rel="noopener">${esc(m.repo)}</a>${
+        m.files&&m.files.length?`・確切檔案：${m.files.map(esc).join("、")}`:""}</p>`;
+  }
+  if(r.flags && r.flags.length){
+    html+=`<div class="sechead">誠實旗標</div>`;
+    r.flags.forEach(f=>{ html+=`<div class="flag"><code>${esc(f)}</code><span>${FLAG_TEXT[f]||"（內部旗標，說明文案待補——請回報）"}</span></div>`; });
+  }
+  html+=`<p class="axisnote">單一橫軸：bytes（0 → ${fmtG(r.budget!=null?Math.max(r.demand,r.budget+r.safety)*1.06:0)}）。
+    所有數值同時提供於表格（無障礙雙生視圖）。</p>`;
+  body.innerHTML=html;
+  body.querySelectorAll(".copybtn").forEach(b=>b.onclick=()=>{
+    const t=b.dataset.copy;
+    const done=()=>{b.textContent="已複製 ✓";setTimeout(()=>b.textContent="複製",1400);};
+    if(navigator.clipboard&&navigator.clipboard.writeText)
+      navigator.clipboard.writeText(t).then(done).catch(done);
+    else done();
+  });
+  lastFocus = document.activeElement;
+  document.querySelector(".wrap").setAttribute("inert","");
+  document.getElementById("ovl").classList.add("open");
+  document.getElementById("drawer").classList.add("open");
+  document.getElementById("dclose").focus();
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    body.querySelectorAll(".seg").forEach(s=>s.style.width=s.dataset.w);
+  }));
+}
+function sparkline(pts){
+  if(!pts || pts.length<2) return "—";
+  const vals=pts.map(p=>p[1]);
+  const mn=Math.min(...vals), mx=Math.max(...vals);
+  const W=150,H=34,pad=2;
+  const xy=pts.map((p,i)=>{
+    const x=pad+i*(W-2*pad)/(pts.length-1);
+    const y=mx===mn?H/2:pad+(mx-p[1])*(H-2*pad)/(mx-mn);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return `<svg width="${W}" height="${H}" role="img" aria-label="tok/s 由 ${mx} 衰減至 ${mn}">
+    <polyline points="${xy}" fill="none" stroke="var(--s1)" stroke-width="2"/>
+  </svg><small style="font-size:11px;color:var(--ink-muted)"> ${mx}→${mn}</small>`;
+}
+let lastFocus=null;
+function closeDrawer(){
+  document.getElementById("ovl").classList.remove("open");
+  document.getElementById("drawer").classList.remove("open");
+  document.querySelector(".wrap").removeAttribute("inert");
+  if(lastFocus && lastFocus.focus){ lastFocus.focus(); lastFocus=null; }
+}
+document.getElementById("ovl").onclick=closeDrawer;
+document.getElementById("dclose").onclick=closeDrawer;
+addEventListener("keydown",e=>{ if(e.key==="Escape") closeDrawer(); });
+// focus trap: while the drawer dialog is open, Tab cycles inside it
+document.getElementById("drawer").addEventListener("keydown",e=>{
+  if(e.key!=="Tab") return;
+  const f=[...document.getElementById("drawer")
+    .querySelectorAll("button,[href],input,select,[tabindex]:not([tabindex='-1'])")]
+    .filter(x=>!x.disabled && x.offsetParent!==null);
+  if(!f.length) return;
+  const first=f[0], last=f[f.length-1];
+  if(e.shiftKey && document.activeElement===first){ e.preventDefault(); last.focus(); }
+  else if(!e.shiftKey && document.activeElement===last){ e.preventDefault(); first.focus(); }
+});
+
+document.getElementById("commit").textContent=DATA.commit;
+(function tierbadge(){
+  // honesty: the header must agree with the cells — after a machine
+  // calibration lands, speed cells on the calibrated pool are T1
+  if (Object.values(DATA.results).some(r=>r.calibrated))
+    document.getElementById("tierbadge").innerHTML =
+      "證據等級 <b>記憶體 T0・速度 T1（本機已校準）</b>";
+})();
+(function freshness(){
+  if(!DATA.catalog_generated_at) return;
+  const gen=new Date(DATA.catalog_generated_at);
+  if(isNaN(gen)) return;
+  const days=Math.floor((Date.now()-gen.getTime())/86400000);
+  const el=document.createElement("span");
+  el.textContent=` 目錄建置於 ${gen.toLocaleString()}（${days} 天前）`+(days>30?"・⚠ 已超過 30 天，建議重建目錄":"")+"。";
+  const fx=document.getElementById("fixnote");
+  fx.parentNode.insertBefore(el, fx.nextSibling);
+})();
+(function fixnote(){
+  const real = DATA.hardware.filter(h=>h.real).length;
+  const synthCat = DATA.catalog === "synthetic";
+  const el = document.getElementById("fixnote");
+  if (real && !synthCat)
+    el.textContent = `🔍 標示者為真實掃描機器；「參考機」為已知頻寬的合成對照。模型目錄快照：${DATA.catalog}。`;
+  else if (real)
+    el.textContent = "🔍 標示者為真實掃描機器；模型為合成 fixtures。";
+  else if (!synthCat)
+    el.textContent = `硬體為合成 fixtures；模型來自目錄快照 ${DATA.catalog}。`;
+  // else: keep the static all-synthetic sentence
+})();
+(function subline(){
+  const real=DATA.hardware.filter(h=>h.real);
+  let s="點任一格看記憶體分解、ctx 上限、tok/s 預測與 trade-off 曲線。";
+  s = `模型目錄：${DATA.catalog}` + (real.length?`・含真實掃描機器（${new Date(real[0].measured_at*1000).toLocaleString()}）`:"") + "。" + s;
+  document.getElementById("subline").textContent=s;
+})();
+render();
+renderReco();
+document.querySelector(".wrap").classList.add("reveal");
+</script>
+</body>
+</html>

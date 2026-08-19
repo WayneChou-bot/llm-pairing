@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "probe_tier": "T1",
+  "platform": "windows",
+  "measured_at_unix": 1755129600,
+  "cpu": {
+    "model": "Synthetic Desktop CPU 8C/16T",
+    "physical_cores": 8,
+    "logical_cores": 16
+  },
+  "system_memory": {
+    "total_bytes": 34359738368,
+    "available_bytes": 25769803776,
+    "bandwidth_bytes_per_s": 51200000000,
+    "bandwidth_source": "SPEC_DB"
+  },
+  "accelerators": [
+    {
+      "id": "gpu0",
+      "vendor": "nvidia",
+      "name": "Synthetic GeForce Desktop 8GB",
+      "is_laptop_variant": false,
+      "topology": "DISCRETE",
+      "drives_display": true,
+      "vram_total_bytes": 8589934592,
+      "vram_free_bytes": 7784628224,
+      "bandwidth_bytes_per_s": 272000000000,
+      "bandwidth_source": "SPEC_DB",
+      "peak_flops_fp16": 15000000000000,
+      "flops_source": "SPEC_DB"
+    }
+  ],
+  "apple": null
+}

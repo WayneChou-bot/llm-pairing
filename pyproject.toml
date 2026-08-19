@@ -1,0 +1,40 @@
+[project]
+name = "llmpairing"
+version = "0.0.1"
+description = "LLM pairing - match your machine to the local LLMs it can actually run, with published error bars"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2,<3",
+    "psutil>=5.9",  # probe/ only (T-001)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "hypothesis>=6",
+    "mypy>=1.10",
+    "types-psutil",  # mypy stubs for the probe/ runtime dep
+]
+
+[project.scripts]
+llmpairing = "llmpairing.cli:main"
+llmpairing-probe = "llmpairing.probe.cli:main"  # kept as an alias of `llmpairing probe`
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["llmpairing*"]
+
+[tool.setuptools.package-data]
+llmpairing = ["py.typed"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+warn_unreachable = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

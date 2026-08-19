@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "probe_tier": "T2",
+  "platform": "darwin",
+  "measured_at_unix": 1755129600,
+  "cpu": {
+    "model": "Synthetic Apple SoC 16C",
+    "physical_cores": 16,
+    "logical_cores": 16
+  },
+  "system_memory": {
+    "total_bytes": 68719476736,
+    "available_bytes": 51539607552,
+    "bandwidth_bytes_per_s": 400000000000,
+    "bandwidth_source": "MEASURED"
+  },
+  "accelerators": [
+    {
+      "id": "gpu0",
+      "vendor": "apple",
+      "name": "Synthetic Apple SoC GPU (high bandwidth)",
+      "is_laptop_variant": false,
+      "topology": "UNIFIED",
+      "drives_display": true,
+      "vram_total_bytes": null,
+      "vram_free_bytes": null,
+      "bandwidth_bytes_per_s": 400000000000,
+      "bandwidth_source": "MEASURED",
+      "peak_flops_fp16": 28000000000000,
+      "flops_source": "SPEC_DB"
+    }
+  ],
+  "apple": {
+    "unified_memory_bytes": 68719476736,
+    "iogpu_wired_limit_mb": null,
+    "recommended_max_working_set_bytes": 51539607552
+  }
+}

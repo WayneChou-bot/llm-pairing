@@ -36,8 +36,10 @@ KV_OPTIONS = ["f16", "q8_0", "q4_0"]
 PREVIEW_QUANTS = ("Q4_K_M", "Q5_K_M", "Q8_0", "F16")
 
 REFERENCE_HW = [
-    ("hw_apple_unified_64gb", "參考機：Apple 統一記憶體 64GB"),
-    ("hw_discrete_nvidia_8gb", "參考機：桌機獨顯 8GB"),
+    ("hw_apple_unified_64gb", "參考機：Apple 統一記憶體 64GB",
+     "Reference: Apple unified memory 64GB"),
+    ("hw_discrete_nvidia_8gb", "參考機：桌機獨顯 8GB",
+     "Reference: desktop dGPU 8GB"),
 ]
 
 
@@ -56,15 +58,18 @@ def load_machines(profile_path: str | None) -> list[dict[str, Any]]:
         igpu = any(a.topology == "INTEGRATED_SHARED" for a in prof.accelerators)
         if igpu:
             machines.append({"id": "you-igpu", "label": "你的機器（若引擎用 iGPU）",
+                             "label_en": "Your machine (engine on iGPU)",
                              "hw": prof, "real": True})
             machines.append({"id": "you-cpu", "label": "你的機器（純 CPU，如 Ollama）",
+                             "label_en": "Your machine (CPU only, e.g. Ollama)",
                              "hw": prof.model_copy(update={"accelerators": []}),
                              "real": True})
         else:
-            machines.append({"id": "you", "label": "你的機器", "hw": prof, "real": True})
-    for name, label in REFERENCE_HW:
-        machines.append({"id": name, "label": label, "hw": _hw_fixture(name),
-                         "real": False})
+            machines.append({"id": "you", "label": "你的機器",
+                             "label_en": "Your machine", "hw": prof, "real": True})
+    for name, label, label_en in REFERENCE_HW:
+        machines.append({"id": name, "label": label, "label_en": label_en,
+                         "hw": _hw_fixture(name), "real": False})
     return machines
 
 
@@ -142,7 +147,8 @@ def build(profile_path: str | None) -> dict[str, Any]:
         hw = m["hw"]
         acc = hw.accelerators[0] if hw.accelerators else None
         hardware.append({
-            "id": m["id"], "label": m["label"], "real": m["real"],
+            "id": m["id"], "label": m["label"],
+            "label_en": m.get("label_en") or m["label"], "real": m["real"],
             "topology": acc.topology if acc else "RAM_ONLY",
             "ram_gib": round(hw.system_memory.total_bytes / 1024**3, 1),
             "avail_gib": round(hw.system_memory.available_bytes / 1024**3, 1),

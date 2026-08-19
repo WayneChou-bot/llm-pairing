@@ -224,8 +224,8 @@ footer code { font-size:11px; }
     <h2>LLM pairing</h2>
     <p class="note" id="bootnote">展示模式：以下流程為<b>模擬動畫</b>，結果為建置時預先計算。</p>
     <div class="bstep" id="bs0"><span class="dot"></span><span id="bs0t">載入硬體規格</span></div>
-    <div class="bstep" id="bs1"><span class="dot"></span>載入模型目錄快照</div>
-    <div class="bstep" id="bs2"><span class="dot"></span>計算 <span id="bcount">…</span> 組配對（T-002 純函式核心）</div>
+    <div class="bstep" id="bs1"><span class="dot"></span><span id="bs1t">載入模型目錄快照</span></div>
+    <div class="bstep" id="bs2"><span class="dot"></span><span id="bs2a">計算 </span><span id="bcount">…</span><span id="bs2b"> 組配對（T-002 純函式核心）</span></div>
     <div class="pbar"><i id="pfill"></i></div>
     <div class="bskip"><button id="bskip">跳過動畫 →</button></div>
   </div>
@@ -239,7 +239,8 @@ footer code { font-size:11px; }
     </div>
     <div style="display:flex; gap:8px; align-items:center;">
       <span class="tierbadge" id="tierbadge">證據等級 <b>T0 估算</b>・未經實測校準</span>
-      <button class="chip" id="themebtn" title="切換主題">🌓 主題</button>
+      <button class="chip" id="langbtn"></button>
+      <button class="chip" id="themebtn" title="theme">🌓 主題</button>
     </div>
   </header>
 
@@ -255,8 +256,8 @@ footer code { font-size:11px; }
   <details class="adv viz-root" id="advdetails">
     <summary>進階：完整配對矩陣（所有機器 × 模型 × context × KV 精度）</summary>
     <div class="filters viz-root" role="group" aria-label="篩選條件">
-      <div class="fgroup"><span class="lbl">目標 context</span><span id="ctxchips"></span></div>
-      <div class="fgroup"><span class="lbl">KV cache 精度</span><span id="kvchips"></span></div>
+      <div class="fgroup"><span class="lbl" id="lblctx">目標 context</span><span id="ctxchips"></span></div>
+      <div class="fgroup"><span class="lbl" id="lblkv">KV cache 精度</span><span id="kvchips"></span></div>
       <div class="fgroup"><input id="msearch" type="search" placeholder="搜尋模型…"
         aria-label="搜尋模型" style="font:inherit;font-size:13px;padding:5px 10px;border-radius:8px;
         border:1px solid var(--ring);background:transparent;color:var(--ink-1);width:150px;"></div>
@@ -272,8 +273,8 @@ footer code { font-size:11px; }
   </details>
 
   <footer class="viz-root">
-    誠實聲明：所有數值為 <b>T0（規格表估算）</b>，activation 採 [0.5, 1.5] GiB 區間上界（待 T-003 校準）；
-    白名單外的架構一律回報「尚未支援」而非猜測（R-2）。
+    <span id="foothonest">誠實聲明：所有數值為 <b>T0（規格表估算）</b>，activation 採 [0.5, 1.5] GiB
+    區間上界（待 T-003 校準）；白名單外的架構一律回報「尚未支援」而非猜測（R-2）。</span>
     <span id="fixnote">硬體與模型皆為合成 fixtures，非真實產品量測。</span><br>
     LLM pairing・T-002 pure core・commit <code id="commit"></code>・
     分類決策鏈 SPEC §4.4・保守優先（FA ≤ 2% 目標）
@@ -289,6 +290,13 @@ footer code { font-size:11px; }
 <script>
 "use strict";
 const DATA = /*__DATA__*/null;
+
+/* ---------- language (zh-Hant / en) ---------- */
+const LANG=(()=>{try{const v=localStorage.getItem("llmp_lang");if(v==="zh"||v==="en")return v;}catch(e){}
+  return ((navigator.language||"").toLowerCase().startsWith("zh"))?"zh":"en";})();
+function setLang(l){try{localStorage.setItem("llmp_lang",l);}catch(e){} location.reload();}
+const ZH = LANG!=="en";
+document.documentElement.lang = ZH ? "zh-Hant" : "en";
 
 const VERDICT = {
   FITS:            { ic:"✓", label:"可以跑",     cls:"FITS",
@@ -329,6 +337,162 @@ const FLAG_TEXT = {
   KV_SHARED_TRAILING_LAYERS_FROM_CONFIG:"共享 KV 尾層依 config 排除（A3）",
   NVIDIA_SMI_PARSER_UNVERIFIED_ON_REAL_HW:"NVIDIA 顯卡數據以文件記載格式解析，尚未在真實 N 卡驗證——結論請保守看待，歡迎回報實測",
 };
+if(!ZH){
+  Object.assign(VERDICT.FITS,{label:"Runs",why:"Plenty of memory — the model loads fully. The ideal case."});
+  Object.assign(VERDICT.TIGHT,{label:"Barely runs",why:"It fits, but headroom is under the 5% safety buffer — other apps grabbing memory may cause failures."});
+  Object.assign(VERDICT.PARTIAL_OFFLOAD,{label:"Runs, slower",why:"The model doesn't fit in GPU memory, so part of it spills to much slower system RAM: it runs, but generation slows down noticeably. \"n/m layers on GPU\" shows how much fits — higher is faster."});
+  Object.assign(VERDICT.OOM_AT_CONTEXT,{label:"OOM at long context",why:"Short chats are fine, but long documents need more cache memory than available. Lower the context to use it."});
+  Object.assign(VERDICT.OOM_AT_LOAD,{label:"Won't run",why:"Not enough memory even to load the model — this combination is unusable."});
+  Object.assign(VERDICT.RAM_ONLY,{label:"Runs (no GPU)",why:"No usable GPU on this machine, so it runs on system RAM + CPU: works, but speed is limited."});
+  Object.assign(VERDICT.UNSUPPORTED_ARCH,{label:"Not supported",why:"This architecture is not on the support whitelist and its memory formulas are unverified. Per the R-2 rule: if we don't know, we say so — we never guess."});
+  Object.assign(VERDICT.UNSUPPORTED_TOPOLOGY,{label:"Topology unsupported",why:"Multi-GPU topologies are not supported in v1."});
+  Object.assign(VERDICT.UNSUPPORTED_ENGINE,{label:"Engine unsupported",why:"v1 supports llama.cpp only."});
+  Object.assign(FLAG_TEXT,{
+    ACTIVATION_PRIOR_PENDING_T003:"activation uses a literature-prior upper bound, pending T-003 calibration",
+    IGPU_ESTIMATE_LOW_CONFIDENCE:"iGPU shared memory is a structural approximation — low confidence (forced T0)",
+    APPLE_WIRED_LIMIT_HEADROOM:"Apple wired limit is low — raising iogpu.wired_limit_mb frees more memory",
+    PARTIAL_OFFLOAD_KV_APPROX:"conservative approximation: assumes the whole KV cache stays on GPU (under-claims only, never over)",
+    OFFLOAD_EMBED_UNKNOWN_CONSERVATIVE:"bpw unknown — embeddings estimated the most conservative way",
+    WEIGHTS_ESTIMATED:"weight size is back-derived (±8%), not a catalog-verified figure",
+    CTX_TARGET_EXCEEDS_MODEL_MAX:"target context exceeds the model's declared maximum",
+    RAM_ONLY_POOL:"system RAM is the resource pool (no accelerator)",
+    RAM_ONLY_TIGHT_HEADROOM:"RAM headroom is below the safety margin",
+    RAM_SPILL_EXCEEDS_AVAILABLE:"weights spilling to system RAM exceed what's available — even \"slow mode\" is impossible, so: won't run (A2)",
+    DISCRETE_GPU_DATA_UNAVAILABLE_EXCLUDED:"no memory data for this discrete GPU (probe pending) — excluded, evaluated conservatively on the rest",
+    UBATCH_NOT_YET_MODELED:"the ubatch setting doesn't affect the math yet — shown so you don't assume it took effect",
+    MACHINE_CALIBRATED:"speed calibrated on this machine (T1)",
+    CALIBRATION_POOL_MISMATCH_IGNORED:"calibration measured a different memory pool — not applied (strict pool matching)",
+    PARTIAL_OFFLOAD_HARMONIC:"partial offload uses a harmonic model: layers left in system RAM drag the whole run down",
+    PREFILL_LOW_CONFIDENCE:"prefill (long-input read) speed is a low-confidence estimate",
+    LOOKUP_PARAMS_TRAFFIC_EXCLUDED:"lookup-table params (e.g. PLE) excluded from per-token traffic (A5, backed by field calibration)",
+    KV_SHARED_TRAILING_LAYERS_FROM_CONFIG:"shared trailing KV layers excluded per config (A3)",
+    NVIDIA_SMI_PARSER_UNVERIFIED_ON_REAL_HW:"NVIDIA data parsed from the documented format but not yet verified on a real card — treat conservatively; field reports welcome",
+  });
+}
+/* UI strings (chrome + composed fragments) */
+const TT = ZH ? {
+  title:"LLM pairing — 硬體 × 模型配對 Demo", h1small:"硬體 × 模型配對矩陣",
+  subBase:"點任一格看記憶體分解、ctx 上限、tok/s 預測與 trade-off 曲線。",
+  subCat:c=>`模型目錄：${c}`, subReal:d=>`・含真實掃描機器（${d}）`,
+  badge0:"證據等級 <b>T0 估算</b>・未經實測校準",
+  badgeCal:"證據等級 <b>記憶體 T0・速度 T1（本機已校準）</b>",
+  themeAuto:"🌓 主題", themeLight:"☀️ 亮色", themeDark:"🌙 暗色",
+  bs1:"載入模型目錄快照", bs2a:"計算 ", bs2b:" 組配對（T-002 純函式核心）", bskip:"跳過動畫 →",
+  bootReal:"載入真實掃描的硬體規格", bootSynth:"載入合成硬體 fixtures（非真實偵測）",
+  bootNote:(hasReal,synthCat)=> (hasReal||!synthCat)
+    ? "展示模式：以下流程為<b>模擬動畫</b>；配對結果來自建置時的"+(hasReal?"真實硬體掃描":"合成硬體 fixtures")+(synthCat?"與合成模型 fixtures。":"與模型目錄快照。")
+    : "展示模式：以下流程為<b>模擬動畫</b>，資料為預先計算的合成 fixtures（非真實偵測）。",
+  recoTitle:"🎯 為你的機器推薦", advSummary:"進階：完整配對矩陣（所有機器 × 模型 × context × KV 精度）",
+  lblCtx:"目標 context", lblKv:"KV cache 精度", searchPh:"搜尋模型…", runOnly:"只顯示可跑",
+  combo:(hw,shown,all,total)=>`顯示 ${hw}×${shown}${shown!==all?`（已篩選，全部 ${all} 欄）`:""} / 共 ${total} 組預計算結果`,
+  corner:"硬體 \\ 模型", realScan:"🔍 真實掃描・", avail:a=>`（可用 ${a}）`,
+  headroom:"餘裕 ", headroomTight:"餘裕僅 ", layersGpu:(g,n)=>`${g}/${n} 層進 GPU`, ctxCap:"ctx 上限 ", over:"超出 ", unsup:"尚未支援",
+  est:(t,tier)=>`預估 ~${t} tok/s（證據等級 ${tier}）`, cardAria:(k,l,q)=>`${k}：${l} ${q}，點擊看完整記憶體分解`,
+  dsub:(c,kv,p,act,tier)=>`目標 context ${c}・KV ${kv}・${p}B 參數${act}・證據等級 ${tier}`, dsubAct:a=>`（active ${a}B）`,
+  stBudget:"可用預算（物理）", stDemand:"總需求（保守端）", stCtxMax:"全 GPU 可行的 ctx 上限", stNoFull:"— <small>全上 GPU 不可行</small>",
+  stLayers:"可上 GPU 層數", stLayersOf:n=>` <small>/ ${n} 層</small>`,
+  secBreak:"記憶體需求分解 vs 預算", stackAria:"需求堆疊條，數值見下方表格",
+  tagSafe:"安全預算 ", tagPhys:"物理上限 ", segW:"權重 ", segKV:"KV cache ", segAct:"activation ", segLg:"logits ",
+  thItem:"項目", thSrc:"來源", rowW:["權重","目錄檔案大小"], rowKV:c=>[`KV cache（${c}）`,"公式精確值"], rowAct:["activation","先驗上界"],
+  rowLg:["logits","vocab × 4"], rowTot:["總需求","保守端"], rowBud:["可用預算（含安全邊際）","§4.1"],
+  secTrade:"Trade-off：不同 context 的判定",
+  spdCal:"速度預測（<b>T1・本機實測校準</b>，ci 為量測離散）", spdT0:"速度預測（T0・η 未校準，ci 為 η 區間）",
+  spdDecode:"decode @ 目標 ctx", spdDecay:"衰減曲線", spdOnly:"速度預測",
+  harmonic:"⚠ 部分卸載調和模型：落在 CPU 的層拖慢整體——這就是「少一點記憶體、慢好幾倍」的懸崖。",
+  noteSuffix:"——依 R-2 紀律不以「同世代平均」猜測。",
+  secGet:"取得這個模型", copy:"複製", copied:"已複製 ✓", srcRepo:"來源 repo：", exactFiles:"・確切檔案：", fileSep:"、",
+  secFlags:"誠實旗標", flagPending:"（內部旗標，說明文案待補——請回報）",
+  axis:m=>`單一橫軸：bytes（0 → ${m}）。所有數值同時提供於表格（無障礙雙生視圖）。`,
+  sparkAria:(mx,mn)=>`tok/s 由 ${mx} 衰減至 ${mn}`,
+  footHonest:"誠實聲明：所有數值為 <b>T0（規格表估算）</b>，activation 採 [0.5, 1.5] GiB 區間上界（待 T-003 校準）；白名單外的架構一律回報「尚未支援」而非猜測（R-2）。",
+  fresh:(d,days)=>` 目錄建置於 ${d}（${days} 天前）`+(days>30?"・⚠ 已超過 30 天，建議重建目錄":"")+"。",
+  fixRealCat:c=>`🔍 標示者為真實掃描機器；「參考機」為已知頻寬的合成對照。模型目錄快照：${c}。`,
+  fixReal:"🔍 標示者為真實掃描機器；模型為合成 fixtures。", fixCat:c=>`硬體為合成 fixtures；模型來自目錄快照 ${c}。`,
+  closeAria:"關閉",
+} : {
+  title:"LLM pairing — hardware × model pairing demo", h1small:"hardware × model pairing matrix",
+  subBase:"Click any cell for the memory breakdown, ctx ceiling, tok/s prediction and trade-off curve.",
+  subCat:c=>`Catalog: ${c}`, subReal:d=>` · includes a real scanned machine (${d})`,
+  badge0:"Evidence <b>T0 estimate</b> · not machine-calibrated",
+  badgeCal:"Evidence <b>memory T0 · speed T1 (calibrated on this machine)</b>",
+  themeAuto:"🌓 Theme", themeLight:"☀️ Light", themeDark:"🌙 Dark",
+  bs1:"Loading model catalog snapshot", bs2a:"Computing ", bs2b:" pairings (T-002 pure core)", bskip:"Skip animation →",
+  bootReal:"Loading the real hardware scan", bootSynth:"Loading synthetic hardware fixtures (not a real probe)",
+  bootNote:(hasReal,synthCat)=> (hasReal||!synthCat)
+    ? "Demo mode: the sequence below is a <b>simulated animation</b>; results were precomputed at build time from "+(hasReal?"a real hardware scan":"synthetic hardware fixtures")+(synthCat?" and synthetic model fixtures.":" and a model-catalog snapshot.")
+    : "Demo mode: the sequence below is a <b>simulated animation</b> over precomputed synthetic fixtures (not a real probe).",
+  recoTitle:"🎯 Recommended for your machine", advSummary:"Advanced: full pairing matrix (all machines × models × context × KV precision)",
+  lblCtx:"target context", lblKv:"KV cache precision", searchPh:"Search models…", runOnly:"Runnable only",
+  combo:(hw,shown,all,total)=>`Showing ${hw}×${shown}${shown!==all?` (filtered, ${all} columns total)`:""} / ${total} precomputed combos`,
+  corner:"hardware \\ model", realScan:"🔍 real scan · ", avail:a=>` (avail ${a})`,
+  headroom:"headroom ", headroomTight:"headroom only ", layersGpu:(g,n)=>`${g}/${n} layers on GPU`, ctxCap:"ctx ceiling ", over:"over by ", unsup:"not supported",
+  est:(t,tier)=>`est. ~${t} tok/s (evidence ${tier})`, cardAria:(k,l,q)=>`${k}: ${l} ${q}, click for the full memory breakdown`,
+  dsub:(c,kv,p,act,tier)=>`target context ${c} · KV ${kv} · ${p}B params${act} · evidence ${tier}`, dsubAct:a=>` (active ${a}B)`,
+  stBudget:"usable budget (physical)", stDemand:"total demand (conservative)", stCtxMax:"max ctx fully on GPU", stNoFull:"— <small>full-GPU infeasible</small>",
+  stLayers:"GPU layers possible", stLayersOf:n=>` <small>/ ${n} layers</small>`,
+  secBreak:"Memory demand breakdown vs budget", stackAria:"demand stack; exact values in the table below",
+  tagSafe:"safe budget ", tagPhys:"physical limit ", segW:"weights ", segKV:"KV cache ", segAct:"activation ", segLg:"logits ",
+  thItem:"item", thSrc:"source", rowW:["weights","catalog file size"], rowKV:c=>[`KV cache (${c})`,"exact formula"], rowAct:["activation","prior upper bound"],
+  rowLg:["logits","vocab × 4"], rowTot:["total demand","conservative"], rowBud:["usable budget (incl. safety margin)","§4.1"],
+  secTrade:"Trade-off: verdict at each context",
+  spdCal:"Speed prediction (<b>T1 · calibrated on this machine</b>; ci = measurement spread)", spdT0:"Speed prediction (T0 · η uncalibrated; ci = η range)",
+  spdDecode:"decode @ target ctx", spdDecay:"decay curve", spdOnly:"Speed prediction",
+  harmonic:"⚠ Harmonic partial-offload model: layers left on CPU drag the whole run — the \"slightly less memory, several times slower\" cliff.",
+  noteSuffix:" — per rule R-2 we never guess from \"same-generation averages\".",
+  secGet:"Get this model", copy:"Copy", copied:"Copied ✓", srcRepo:"Source repo: ", exactFiles:" · exact files: ", fileSep:", ",
+  secFlags:"Honesty flags", flagPending:"(internal flag — explanation pending, please report)",
+  axis:m=>`Single horizontal axis: bytes (0 → ${m}). All values are also in the table (accessible twin view).`,
+  sparkAria:(mx,mn)=>`tok/s decays from ${mx} to ${mn}`,
+  footHonest:"Honesty statement: all figures are <b>T0 (spec-sheet estimates)</b>; activation uses the [0.5, 1.5] GiB prior upper bound (pending T-003 calibration); architectures outside the whitelist report \"not supported\" rather than a guess (R-2).",
+  fresh:(d,days)=>` Catalog built ${d} (${days} days ago)`+(days>30?" · ⚠ over 30 days old — consider rebuilding":"")+".",
+  fixRealCat:c=>`🔍 marks the real scanned machine; \"reference\" machines are synthetic baselines with known bandwidth. Catalog snapshot: ${c}.`,
+  fixReal:"🔍 marks the real scanned machine; models are synthetic fixtures.", fixCat:c=>`Hardware entries are synthetic fixtures; models come from catalog snapshot ${c}.`,
+  closeAria:"Close",
+};
+const hlabel = h => ZH ? h.label : (h.label_en || h.label);
+const CAVEAT_EN = {
+  "TIGHT：剩餘記憶體低於安全緩衝——其他程式一搶記憶體就可能失敗":
+    "TIGHT: headroom is below the safety buffer — other apps grabbing memory may cause failures",
+  "速度為相對排序（依每 token 記憶體流量的物理量）；絕對 tok/s 未校準——跑一次 T-003 校準即可升級":
+    "Speed is a relative ranking (by physical per-token memory traffic); absolute tok/s is uncalibrated — one T-003 calibration run upgrades it",
+};
+const NOTE_EN = {
+  "無頻寬資料（spec_db 未收錄此硬體）":"no bandwidth data (this hardware is not in spec_db yet)",
+  "速度模型拒絕：目錄資料不一致（V-P5 哨兵）":"speed model refused: inconsistent catalog data (V-P5 sentinel)",
+};
+const trCaveat = c => ZH ? c : (CAVEAT_EN[c] || c);
+const trNote = n => ZH ? n : (NOTE_EN[n] || n);
+function trReason(p){
+  if(ZH) return p.reason;
+  if(p.kind==="CAPABILITY") return `Largest model that fully loads (${p.params_active_b}B active params)`;
+  if(p.kind==="SPEED") return p.tps!=null
+    ? `Fastest fully-loading option (est. ~${Math.round(p.tps)} tok/s)`
+    : `Fastest fully-loading option (lowest per-token memory traffic)`;
+  if(p.kind==="LONG_CONTEXT") return `Largest model that still fully loads at context ${fmtCtx(p.ctx)}`;
+  return p.reason;
+}
+/* apply chrome strings (both languages set explicitly — single source) */
+(function chrome(){
+  document.title = TT.title;
+  document.querySelector("h1 small").textContent = TT.h1small;
+  document.getElementById("bs1t").textContent = TT.bs1;
+  document.getElementById("bs2a").textContent = TT.bs2a;
+  document.getElementById("bs2b").textContent = TT.bs2b;
+  document.getElementById("bskip").textContent = TT.bskip;
+  document.querySelector("#recosec .t").textContent = TT.recoTitle;
+  document.querySelector("#advdetails > summary").textContent = TT.advSummary;
+  document.getElementById("lblctx").textContent = TT.lblCtx;
+  document.getElementById("lblkv").textContent = TT.lblKv;
+  document.getElementById("msearch").placeholder = TT.searchPh;
+  document.getElementById("runonly").textContent = TT.runOnly;
+  document.getElementById("foothonest").innerHTML = TT.footHonest;
+  document.getElementById("tierbadge").innerHTML = TT.badge0;
+  document.getElementById("dclose").setAttribute("aria-label", TT.closeAria);
+  const lb=document.getElementById("langbtn");
+  lb.textContent = ZH ? "EN" : "中文";
+  lb.setAttribute("aria-label", ZH ? "Switch to English" : "切換為繁體中文");
+  lb.onclick = ()=>setLang(ZH ? "en" : "zh");
+})();
 /* Review batch 1: every catalog/probe-derived string (model id, quant
    label, license, machine label/GPU name, mapping notes) passes through
    esc() before entering innerHTML — a hostile HF repo name must render as
@@ -365,14 +529,8 @@ function visibleModels(){
   // baked in — no more claiming「合成 fixtures」over a real scan
   const hasReal = DATA.hardware.some(h=>h.real);
   const synthCat = DATA.catalog === "synthetic";
-  document.getElementById("bs0t").textContent =
-    hasReal ? "載入真實掃描的硬體規格" : "載入合成硬體 fixtures（非真實偵測）";
-  document.getElementById("bootnote").innerHTML =
-    hasReal || !synthCat
-      ? "展示模式：以下流程為<b>模擬動畫</b>；配對結果來自建置時的"
-        + (hasReal ? "真實硬體掃描" : "合成硬體 fixtures")
-        + (synthCat ? "與合成模型 fixtures。" : "與模型目錄快照。")
-      : "展示模式：以下流程為<b>模擬動畫</b>，資料為預先計算的合成 fixtures（非真實偵測）。";
+  document.getElementById("bs0t").textContent = hasReal ? TT.bootReal : TT.bootSynth;
+  document.getElementById("bootnote").innerHTML = TT.bootNote(hasReal, synthCat);
   let skipSaved=false;
   try{ skipSaved = localStorage.getItem("llmp_skip_boot")==="1"; }catch(e){}
   if (skipSaved || matchMedia("(prefers-reduced-motion: reduce)").matches) { bootEl.remove(); return; }
@@ -399,7 +557,7 @@ function visibleModels(){
   btn.onclick=()=>{ i=(i+1)%3; const m=order[i];
     if(m==="auto") delete document.documentElement.dataset.theme;
     else document.documentElement.dataset.theme=m;
-    btn.textContent = m==="auto"?"🌓 主題":(m==="light"?"☀️ 亮色":"🌙 暗色");
+    btn.textContent = m==="auto"?TT.themeAuto:(m==="light"?TT.themeLight:TT.themeDark);
   };
 })();
 
@@ -419,7 +577,7 @@ function renderFilters(){
   chipRow("kvchips", DATA.kv_options, ()=>sel.kv, v=>sel.kv=v, s=>s);
   const shown=visibleModels().length;
   document.getElementById("combonote").textContent =
-    `顯示 ${DATA.hardware.length}×${shown}${shown!==DATA.models.length?`（已篩選，全部 ${DATA.models.length} 欄）`:""} / 共 ${DATA.combo_count} 組預計算結果`;
+    TT.combo(DATA.hardware.length, shown, DATA.models.length, DATA.combo_count);
   const ro=document.getElementById("runonly");
   ro.classList.toggle("sel", sel.runOnly);
   ro.setAttribute("aria-pressed", String(sel.runOnly));
@@ -428,10 +586,14 @@ document.getElementById("msearch").addEventListener("input", e=>{ sel.q=e.target
 document.getElementById("runonly").addEventListener("click", ()=>{ sel.runOnly=!sel.runOnly; render(); });
 
 /* ---------- recommendation cards ---------- */
-const KIND = {
+const KIND = ZH ? {
   CAPABILITY:  { ic:"🏆", label:"能力優先" },
   SPEED:       { ic:"⚡", label:"速度優先" },
   LONG_CONTEXT:{ ic:"📜", label:"長文優先" },
+} : {
+  CAPABILITY:  { ic:"🏆", label:"Capability first" },
+  SPEED:       { ic:"⚡", label:"Speed first" },
+  LONG_CONTEXT:{ ic:"📜", label:"Long context" },
 };
 let recoSel = null;
 function recoMachines(){
@@ -450,7 +612,7 @@ function renderReco(){
   const tabs = document.getElementById("recotabs"); tabs.innerHTML="";
   if(ms.length>1) ms.forEach(m=>{
     const b=document.createElement("button");
-    b.className="chip"+(m.id===recoSel?" sel":""); b.textContent=m.label;
+    b.className="chip"+(m.id===recoSel?" sel":""); b.textContent=hlabel(m);
     b.setAttribute("aria-pressed", m.id===recoSel ? "true" : "false");
     b.onclick=()=>{ recoSel=m.id; renderReco(); };
     tabs.appendChild(b);
@@ -462,10 +624,9 @@ function renderReco(){
     const v = VERDICT[p.verdict] || VERDICT.UNSUPPORTED_ARCH;
     const b = document.createElement("button");
     b.className = "card";
-    b.setAttribute("aria-label",
-      `${k.label}：${p.label} ${p.quant}，點擊看完整記憶體分解`);
+    b.setAttribute("aria-label", TT.cardAria(k.label, p.label, p.quant));
     const tps = p.tps!=null
-      ? `<span class="mspec">預估 ~${p.tps} tok/s（證據等級 ${esc(p.tps_tier||"T0")}）</span>`
+      ? `<span class="mspec">${TT.est(p.tps, esc(p.tps_tier||"T0"))}</span>`
       : "";
     b.innerHTML = `
       <span class="kind">${k.ic} ${k.label}</span>
@@ -473,13 +634,13 @@ function renderReco(){
       <span class="mspec">${esc(p.quant)}・${p.weights_gib??"?"} GiB・active ${p.params_active_b}B・context ${fmtCtx(p.ctx)}</span>
       <span class="vchip v-${v.cls}"><span class="ic">${v.ic}</span><span class="vt">${v.label}</span></span>
       ${tps}
-      <span class="why">${esc(p.reason)}</span>
-      ${(p.caveats||[]).map(c=>`<span class="cav">⚠ ${esc(c)}</span>`).join("")}`;
+      <span class="why">${esc(trReason(p))}</span>
+      ${(p.caveats||[]).map(c=>`<span class="cav">⚠ ${esc(trCaveat(c))}</span>`).join("")}`;
     b.onclick = ()=>openDrawer(p.key);
     cards.appendChild(b);
   });
   const notes = document.getElementById("reconotes");
-  notes.innerHTML = (rec.notes||[]).map(n=>`· ${esc(n)}`).join("<br>");
+  notes.innerHTML = (rec.notes||[]).map(n=>`· ${esc(trNote(n))}`).join("<br>");
 }
 
 /* ---------- matrix ---------- */
@@ -487,34 +648,34 @@ function cellSub(r){
   if(!r) return "";
   const tps = r.tps!=null ? `・~${r.tps} tok/s` : "";
   switch(r.v){
-    case "FITS": case "RAM_ONLY": return "餘裕 "+fmtG(r.headroom)+tps;
-    case "TIGHT": return "餘裕僅 "+fmtG(r.headroom)+tps;
-    case "PARTIAL_OFFLOAD": return `${r.g}/${r.n_layers} 層進 GPU${tps}`;
-    case "OOM_AT_CONTEXT": return "ctx 上限 "+fmtCtx(r.ctx_max);
-    case "OOM_AT_LOAD": return "超出 "+fmtG(r.demand-(r.budget+r.safety));
-    default: return "尚未支援";
+    case "FITS": case "RAM_ONLY": return TT.headroom+fmtG(r.headroom)+tps;
+    case "TIGHT": return TT.headroomTight+fmtG(r.headroom)+tps;
+    case "PARTIAL_OFFLOAD": return TT.layersGpu(r.g, r.n_layers)+tps;
+    case "OOM_AT_CONTEXT": return TT.ctxCap+fmtCtx(r.ctx_max);
+    case "OOM_AT_LOAD": return TT.over+fmtG(r.demand-(r.budget+r.safety));
+    default: return TT.unsup;
   }
 }
 function render(){
   renderFilters();
   const models=visibleModels();
   const tbl=document.getElementById("matrix");
-  let html="<thead><tr><th scope='col'>硬體 \\ 模型</th>";
+  let html=`<thead><tr><th scope='col'>${TT.corner}</th>`;
   models.forEach(m=>{
     const lic = m.license ? `・${esc(m.license)}` : "";
     html+=`<th scope='col'>${esc(m.label)}<span class='q'>${esc(m.quant)}・${m.weights_gib??"?"} GiB${lic}</span></th>`;
   });
   html+="</tr></thead><tbody>";
   DATA.hardware.forEach(h=>{
-    const real = h.real ? "🔍 真實掃描・" : "";
-    const spec = `${real}${esc(h.topology)}・RAM ${h.ram_gib} GiB（可用 ${h.avail_gib}）`;
-    html+=`<tr><th scope='row'>${esc(h.label)}<span class='hwsub'>${spec}</span></th>`;
+    const real = h.real ? TT.realScan : "";
+    const spec = `${real}${esc(h.topology)}・RAM ${h.ram_gib} GiB${TT.avail(h.avail_gib)}`;
+    html+=`<tr><th scope='row'>${esc(hlabel(h))}<span class='hwsub'>${spec}</span></th>`;
     models.forEach(m=>{
       const key=`${h.id}|${m.id}|${sel.ctx}|${sel.kv}`;
       const r=DATA.results[key];
       const v=VERDICT[r.v]||VERDICT.UNSUPPORTED_ARCH;
       html+=`<td><button class="cell v-${v.cls}" data-key="${esc(key)}"
-        aria-label="${esc(h.label)} × ${esc(m.label)} ${esc(m.quant)}：${v.label}">
+        aria-label="${esc(hlabel(h))} × ${esc(m.label)} ${esc(m.quant)}: ${v.label}">
         <span class="vchip"><span class="ic">${v.ic}</span><span class="vt">${v.label}</span></span>
         <span class="cellsub">${cellSub(r)}</span></button></td>`;
     });
@@ -537,8 +698,8 @@ function openDrawer(key){
   const h=DATA.hardware.find(x=>x.id===hwId), m=DATA.models.find(x=>x.id===mId);
   const r=DATA.results[key]; const v=VERDICT[r.v]||VERDICT.UNSUPPORTED_ARCH;
   const body=document.getElementById("dbody");
-  let html=`<h3 id="dtitle">${esc(h.label)} × ${esc(m.label)} <span style="color:var(--ink-muted)">${esc(m.quant)}</span></h3>
-  <p class="dsub">目標 context ${fmtCtx(+ctx)}・KV ${kv}・${m.params_b}B 參數${m.active_b!==m.params_b?`（active ${m.active_b}B）`:""}・證據等級 ${r.tier??"T0"}</p>
+  let html=`<h3 id="dtitle">${esc(hlabel(h))} × ${esc(m.label)} <span style="color:var(--ink-muted)">${esc(m.quant)}</span></h3>
+  <p class="dsub">${TT.dsub(fmtCtx(+ctx), kv, m.params_b, m.active_b!==m.params_b?TT.dsubAct(m.active_b):"", r.tier??"T0")}</p>
   <div class="dverdict v-${v.cls}"><span class="ic">${v.ic}</span><span class="name vt">${v.label}</span>
     <span style="font-size:12px;color:var(--ink-muted)">${r.v}</span></div>
   <p class="dexplain">${v.why}</p>`;
@@ -548,40 +709,40 @@ function openDrawer(key){
     const scaleMax=Math.max(r.demand,bNo)*1.06;
     const pct=x=>(x/scaleMax*100).toFixed(2)+"%";
     html+=`<div class="stats">
-      <div class="stat"><div class="k">可用預算（物理）</div><div class="v">${fmtG(bNo)}</div></div>
-      <div class="stat"><div class="k">總需求（保守端）</div><div class="v">${fmtG(r.demand)}</div></div>
-      <div class="stat"><div class="k">全 GPU 可行的 ctx 上限</div>
-        <div class="v">${r.ctx_max>0?`${fmtCtx(r.ctx_max)} <small>tokens</small>`:"— <small>全上 GPU 不可行</small>"}</div></div>
-      <div class="stat"><div class="k">${r.g!=null?"可上 GPU 層數":"headroom"}</div>
-        <div class="v">${r.g!=null?`${r.g} <small>/ ${r.n_layers} 層</small>`:fmtG(r.headroom)}</div></div>
+      <div class="stat"><div class="k">${TT.stBudget}</div><div class="v">${fmtG(bNo)}</div></div>
+      <div class="stat"><div class="k">${TT.stDemand}</div><div class="v">${fmtG(r.demand)}</div></div>
+      <div class="stat"><div class="k">${TT.stCtxMax}</div>
+        <div class="v">${r.ctx_max>0?`${fmtCtx(r.ctx_max)} <small>tokens</small>`:TT.stNoFull}</div></div>
+      <div class="stat"><div class="k">${r.g!=null?TT.stLayers:"headroom"}</div>
+        <div class="v">${r.g!=null?`${r.g}${TT.stLayersOf(r.n_layers)}`:fmtG(r.headroom)}</div></div>
     </div>
-    <div class="sechead">記憶體需求分解 vs 預算</div>
+    <div class="sechead">${TT.secBreak}</div>
     <div class="stackwrap">
-      <div class="stack" role="img" aria-label="需求堆疊條，數值見下方表格">
+      <div class="stack" role="img" aria-label="${TT.stackAria}">
         <span class="seg w"   style="width:0" data-w="${pct(r.w)}"></span>
         <span class="seg kv"  style="width:0" data-w="${pct(r.kv)}"></span>
         <span class="seg act" style="width:0" data-w="${pct(r.act)}"></span>
         <span class="seg lg"  style="width:0" data-w="${pct(Math.max(r.logits, scaleMax*0.004))}"></span>
       </div>
-      <span class="budgetline" style="left:${pct(r.budget)}"><span class="tag">安全預算 ${fmtG(r.budget)}</span></span>
-      <span class="budgetline" style="left:${pct(bNo)}; opacity:.55"><span class="tag" style="top:auto;bottom:-18px">物理上限 ${fmtG(bNo)}</span></span>
+      <span class="budgetline" style="left:${pct(r.budget)}"><span class="tag">${TT.tagSafe}${fmtG(r.budget)}</span></span>
+      <span class="budgetline" style="left:${pct(bNo)}; opacity:.55"><span class="tag" style="top:auto;bottom:-18px">${TT.tagPhys}${fmtG(bNo)}</span></span>
     </div>
     <div class="stacklegend">
-      <span><i class="sw" style="background:var(--s1)"></i>權重 ${fmtG(r.w)}</span>
-      <span><i class="sw" style="background:var(--s2)"></i>KV cache ${fmtG(r.kv)}</span>
-      <span><i class="sw" style="background:var(--s3)"></i>activation ${fmtG(r.act)}</span>
-      <span><i class="sw" style="background:var(--s4)"></i>logits ${fmtG(r.logits)}</span>
+      <span><i class="sw" style="background:var(--s1)"></i>${TT.segW}${fmtG(r.w)}</span>
+      <span><i class="sw" style="background:var(--s2)"></i>${TT.segKV}${fmtG(r.kv)}</span>
+      <span><i class="sw" style="background:var(--s3)"></i>${TT.segAct}${fmtG(r.act)}</span>
+      <span><i class="sw" style="background:var(--s4)"></i>${TT.segLg}${fmtG(r.logits)}</span>
     </div>
-    <table class="dt"><thead><tr><th>項目</th><th>來源</th><th>bytes</th></tr></thead><tbody>
-      <tr><td>權重</td><td>目錄檔案大小</td><td>${r.w.toLocaleString()}</td></tr>
-      <tr><td>KV cache（${fmtCtx(+ctx)}）</td><td>公式精確值</td><td>${r.kv.toLocaleString()}</td></tr>
-      <tr><td>activation</td><td>先驗上界</td><td>${r.act.toLocaleString()}</td></tr>
-      <tr><td>logits</td><td>vocab × 4</td><td>${r.logits.toLocaleString()}</td></tr>
-      <tr><td><b>總需求</b></td><td>保守端</td><td><b>${r.demand.toLocaleString()}</b></td></tr>
-      <tr><td>可用預算（含安全邊際）</td><td>§4.1</td><td>${r.budget.toLocaleString()}</td></tr>
+    <table class="dt"><thead><tr><th>${TT.thItem}</th><th>${TT.thSrc}</th><th>bytes</th></tr></thead><tbody>
+      <tr><td>${TT.rowW[0]}</td><td>${TT.rowW[1]}</td><td>${r.w.toLocaleString()}</td></tr>
+      <tr><td>${TT.rowKV(fmtCtx(+ctx))[0]}</td><td>${TT.rowKV(fmtCtx(+ctx))[1]}</td><td>${r.kv.toLocaleString()}</td></tr>
+      <tr><td>${TT.rowAct[0]}</td><td>${TT.rowAct[1]}</td><td>${r.act.toLocaleString()}</td></tr>
+      <tr><td>${TT.rowLg[0]}</td><td>${TT.rowLg[1]}</td><td>${r.logits.toLocaleString()}</td></tr>
+      <tr><td><b>${TT.rowTot[0]}</b></td><td>${TT.rowTot[1]}</td><td><b>${r.demand.toLocaleString()}</b></td></tr>
+      <tr><td>${TT.rowBud[0]}</td><td>${TT.rowBud[1]}</td><td>${r.budget.toLocaleString()}</td></tr>
     </tbody></table>`;
     if(r.curve && r.curve.length){
-      html+=`<div class="sechead">Trade-off：不同 context 的判定</div><div class="tstrip">`;
+      html+=`<div class="sechead">${TT.secTrade}</div><div class="tstrip">`;
       r.curve.forEach(([c,cv])=>{
         const tv=VERDICT[cv]||VERDICT.UNSUPPORTED_ARCH;
         html+=`<span class="tcell t-${cv}" title="${tv.label}">${fmtCtx(c)}<small>${tv.label}</small></span>`;
@@ -589,41 +750,38 @@ function openDrawer(key){
       html+=`</div>`;
     }
     if(r.tps!=null){
-      const spd = r.calibrated
-        ? `速度預測（<b>T1・本機實測校準</b>，ci 為量測離散）`
-        : `速度預測（T0・η 未校準，ci 為 η 區間）`;
+      const spd = r.calibrated ? TT.spdCal : TT.spdT0;
       html+=`<div class="sechead">${spd}</div>
       <div class="stats">
-        <div class="stat"><div class="k">decode @ 目標 ctx</div>
-          <div class="v">~${r.tps} <small>tok/s（${r.tps_lo}–${r.tps_hi}）</small></div></div>
-        <div class="stat"><div class="k">衰減曲線</div><div class="v">${sparkline(r.decay)}</div></div>
+        <div class="stat"><div class="k">${TT.spdDecode}</div>
+          <div class="v">~${r.tps} <small>tok/s (${r.tps_lo}–${r.tps_hi})</small></div></div>
+        <div class="stat"><div class="k">${TT.spdDecay}</div><div class="v">${sparkline(r.decay)}</div></div>
       </div>`;
       if((r.flags||[]).includes("PARTIAL_OFFLOAD_HARMONIC"))
-        html+=`<p class="dexplain">⚠ 部分卸載調和模型：落在 CPU 的層拖慢整體——這就是「少一點記憶體、慢好幾倍」的懸崖。</p>`;
+        html+=`<p class="dexplain">${TT.harmonic}</p>`;
     } else if(r.tps_note){
-      html+=`<div class="sechead">速度預測</div>
-      <p class="dexplain">${esc(r.tps_note)}——依 R-2 紀律不以「同世代平均」猜測。</p>`;
+      html+=`<div class="sechead">${TT.spdOnly}</div>
+      <p class="dexplain">${esc(trNote(r.tps_note))}${TT.noteSuffix}</p>`;
     }
   }
   if(m.repo){
     const oll=`ollama run hf.co/${m.repo}:${m.quant}`;
     const lcp=`llama-server -hf ${m.repo}:${m.quant}`;
-    html+=`<div class="sechead">取得這個模型</div>
-      <div class="getcmd"><code>${esc(oll)}</code><button class="copybtn" data-copy="${esc(oll)}">複製</button></div>
-      <div class="getcmd"><code>${esc(lcp)}</code><button class="copybtn" data-copy="${esc(lcp)}">複製</button></div>
-      <p class="axisnote">來源 repo：<a href="https://huggingface.co/${esc(m.repo)}" target="_blank" rel="noopener">${esc(m.repo)}</a>${
-        m.files&&m.files.length?`・確切檔案：${m.files.map(esc).join("、")}`:""}</p>`;
+    html+=`<div class="sechead">${TT.secGet}</div>
+      <div class="getcmd"><code>${esc(oll)}</code><button class="copybtn" data-copy="${esc(oll)}">${TT.copy}</button></div>
+      <div class="getcmd"><code>${esc(lcp)}</code><button class="copybtn" data-copy="${esc(lcp)}">${TT.copy}</button></div>
+      <p class="axisnote">${TT.srcRepo}<a href="https://huggingface.co/${esc(m.repo)}" target="_blank" rel="noopener">${esc(m.repo)}</a>${
+        m.files&&m.files.length?`${TT.exactFiles}${m.files.map(esc).join(TT.fileSep)}`:""}</p>`;
   }
   if(r.flags && r.flags.length){
-    html+=`<div class="sechead">誠實旗標</div>`;
-    r.flags.forEach(f=>{ html+=`<div class="flag"><code>${esc(f)}</code><span>${FLAG_TEXT[f]||"（內部旗標，說明文案待補——請回報）"}</span></div>`; });
+    html+=`<div class="sechead">${TT.secFlags}</div>`;
+    r.flags.forEach(f=>{ html+=`<div class="flag"><code>${esc(f)}</code><span>${FLAG_TEXT[f]||TT.flagPending}</span></div>`; });
   }
-  html+=`<p class="axisnote">單一橫軸：bytes（0 → ${fmtG(r.budget!=null?Math.max(r.demand,r.budget+r.safety)*1.06:0)}）。
-    所有數值同時提供於表格（無障礙雙生視圖）。</p>`;
+  html+=`<p class="axisnote">${TT.axis(fmtG(r.budget!=null?Math.max(r.demand,r.budget+r.safety)*1.06:0))}</p>`;
   body.innerHTML=html;
   body.querySelectorAll(".copybtn").forEach(b=>b.onclick=()=>{
     const t=b.dataset.copy;
-    const done=()=>{b.textContent="已複製 ✓";setTimeout(()=>b.textContent="複製",1400);};
+    const done=()=>{b.textContent=TT.copied;setTimeout(()=>b.textContent=TT.copy,1400);};
     if(navigator.clipboard&&navigator.clipboard.writeText)
       navigator.clipboard.writeText(t).then(done).catch(done);
     else done();
@@ -647,7 +805,7 @@ function sparkline(pts){
     const y=mx===mn?H/2:pad+(mx-p[1])*(H-2*pad)/(mx-mn);
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
-  return `<svg width="${W}" height="${H}" role="img" aria-label="tok/s 由 ${mx} 衰減至 ${mn}">
+  return `<svg width="${W}" height="${H}" role="img" aria-label="${TT.sparkAria(mx,mn)}">
     <polyline points="${xy}" fill="none" stroke="var(--s1)" stroke-width="2"/>
   </svg><small style="font-size:11px;color:var(--ink-muted)"> ${mx}→${mn}</small>`;
 }
@@ -678,8 +836,7 @@ document.getElementById("commit").textContent=DATA.commit;
   // honesty: the header must agree with the cells — after a machine
   // calibration lands, speed cells on the calibrated pool are T1
   if (Object.values(DATA.results).some(r=>r.calibrated))
-    document.getElementById("tierbadge").innerHTML =
-      "證據等級 <b>記憶體 T0・速度 T1（本機已校準）</b>";
+    document.getElementById("tierbadge").innerHTML = TT.badgeCal;
 })();
 (function freshness(){
   if(!DATA.catalog_generated_at) return;
@@ -687,7 +844,7 @@ document.getElementById("commit").textContent=DATA.commit;
   if(isNaN(gen)) return;
   const days=Math.floor((Date.now()-gen.getTime())/86400000);
   const el=document.createElement("span");
-  el.textContent=` 目錄建置於 ${gen.toLocaleString()}（${days} 天前）`+(days>30?"・⚠ 已超過 30 天，建議重建目錄":"")+"。";
+  el.textContent=TT.fresh(gen.toLocaleString(), days);
   const fx=document.getElementById("fixnote");
   fx.parentNode.insertBefore(el, fx.nextSibling);
 })();
@@ -696,17 +853,17 @@ document.getElementById("commit").textContent=DATA.commit;
   const synthCat = DATA.catalog === "synthetic";
   const el = document.getElementById("fixnote");
   if (real && !synthCat)
-    el.textContent = `🔍 標示者為真實掃描機器；「參考機」為已知頻寬的合成對照。模型目錄快照：${DATA.catalog}。`;
+    el.textContent = TT.fixRealCat(DATA.catalog);
   else if (real)
-    el.textContent = "🔍 標示者為真實掃描機器；模型為合成 fixtures。";
+    el.textContent = TT.fixReal;
   else if (!synthCat)
-    el.textContent = `硬體為合成 fixtures；模型來自目錄快照 ${DATA.catalog}。`;
+    el.textContent = TT.fixCat(DATA.catalog);
   // else: keep the static all-synthetic sentence
 })();
 (function subline(){
   const real=DATA.hardware.filter(h=>h.real);
-  let s="點任一格看記憶體分解、ctx 上限、tok/s 預測與 trade-off 曲線。";
-  s = `模型目錄：${DATA.catalog}` + (real.length?`・含真實掃描機器（${new Date(real[0].measured_at*1000).toLocaleString()}）`:"") + "。" + s;
+  let s=TT.subBase;
+  s = TT.subCat(DATA.catalog) + (real.length?TT.subReal(new Date(real[0].measured_at*1000).toLocaleString()):"") + (ZH?"。":". ") + s;
   document.getElementById("subline").textContent=s;
 })();
 render();

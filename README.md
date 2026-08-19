@@ -33,6 +33,8 @@ ground-truth confusion matrix; 10 cells scored so far: 8 true accepts,
 4. **Interactive demo** — `demo/llm-pairing-demo.html`:
    recommendation-first cards, with the full matrix (memory breakdown,
    trade-off curves, decay curves) as the advanced view.
+   **[Try it live](https://waynechou-bot.github.io/llm-pairing/)**
+   (reference machines only — build it locally to see *your* machine).
 
 ## Install
 
@@ -129,6 +131,8 @@ its own `license` field; check it before downloading.
    （T-003）後，預測從文獻先驗（T0）升級成你機器的實測乘積（T1）。
 4. **互動 Demo**——`demo/llm-pairing-demo.html`，推薦卡優先、完整
    矩陣為進階視圖，含記憶體分解、trade-off 曲線與衰減曲線。
+   **[線上試玩](https://waynechou-bot.github.io/llm-pairing/)**
+   （僅參考機——想看「你的機器」請在本機建置）。
 
 ## 安裝
 

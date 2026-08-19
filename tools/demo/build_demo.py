@@ -295,8 +295,15 @@ def build(profile_path: str | None) -> dict[str, Any]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--profile", help="HardwareProfile JSON from llmpairing-probe")
+    ap.add_argument("--no-profile", action="store_true",
+                    help="force the reference-machines-only showcase build "
+                         "(what the public GitHub Pages demo uses)")
+    ap.add_argument("--out", help="output path (default demo/llm-pairing-demo.html)")
     args = ap.parse_args()
     default_profile = REPO / "my_profile.json"
+    if args.no_profile:
+        args.profile = None
+        default_profile = Path("/nonexistent")
     if args.profile and not Path(args.profile).exists():
         # honesty guard: silently building the reference-machines-only demo
         # while printing "profile YES" hid a missing profile (field catch
@@ -308,8 +315,8 @@ def main() -> None:
     template = (Path(__file__).parent / "template.html").read_text(encoding="utf-8")
     payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     html = template.replace("/*__DATA__*/null", payload)
-    out = REPO / "demo" / "llm-pairing-demo.html"
-    out.parent.mkdir(exist_ok=True)
+    out = Path(args.out) if args.out else REPO / "demo" / "llm-pairing-demo.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")
     print(f"wrote {out}  ({out.stat().st_size/1024:.0f} KiB, "
           f"{data['combo_count']} combos, catalog {data['catalog']}, "

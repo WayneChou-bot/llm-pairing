@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -68,6 +69,16 @@ def main() -> int:
         # __pycache__ never ships
         for pyc in wt.rglob("__pycache__"):
             shutil.rmtree(pyc)
+        # GitHub Pages showcase: reference-machines-only demo (no personal
+        # profile, no calibration effects) served from /docs on the public
+        # branch -> https://<user>.github.io/<repo>/
+        r = subprocess.run(
+            [sys.executable, str(REPO / "tools" / "demo" / "build_demo.py"),
+             "--no-profile", "--out", str(wt / "docs" / "index.html")],
+            cwd=REPO, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SystemExit(f"showcase demo build failed: {r.stderr.strip()}")
+        print(r.stdout.strip())
         _git("add", "-A", cwd=wt)
         if not _git("status", "--porcelain", cwd=wt):
             print("public branch already up to date")

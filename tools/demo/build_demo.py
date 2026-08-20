@@ -272,12 +272,19 @@ def build(profile_path: str | None) -> dict[str, Any]:
                     tps_tier=r0.get("tps_tier"),
                 ))
         rr = recommend(cands, target_ctx=rec_ctx, long_ctx=rec_long)
+
+        def _pick_src(pk: Any) -> dict[str, Any]:
+            return source_of(
+                meta_of.get(f"{pk.candidate.model_id}::{pk.candidate.quant}") or {})
+
         recommendations[m["id"]] = {
             "picks": [{
                 "kind": p.kind,
                 "reason": p.reason,
                 "caveats": p.caveats,  # message CODES (review #4 i18n)
                 "trust": p.candidate.trust,
+                "publisher": _pick_src(p).get("publisher"),
+                "tags": _pick_src(p).get("content_tags") or [],
                 "key": f"{m['id']}|{p.candidate.model_id}::{p.candidate.quant}"
                        f"|{p.candidate.ctx}|f16",
                 "label": p.candidate.label,

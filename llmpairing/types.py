@@ -51,6 +51,11 @@ class Verdict(str, Enum):
     PARTIAL_OFFLOAD = "PARTIAL_OFFLOAD"
     RAM_ONLY = "RAM_ONLY"
     OOM_AT_LOAD = "OOM_AT_LOAD"
+    #: review #5 P1 (owner-ratified 2026-08-20): the requested ctx exceeds
+    #: the model's declared max_position_embeddings — NOT a memory verdict;
+    #: no hardware makes this runnable, so memory-derived FITS would be a
+    #: false promise (R-2). More severe than any OOM (unfixable by hw).
+    CTX_EXCEEDS_MODEL_MAX = "CTX_EXCEEDS_MODEL_MAX"
     UNSUPPORTED_ARCH = "UNSUPPORTED_ARCH"
     UNSUPPORTED_TOPOLOGY = "UNSUPPORTED_TOPOLOGY"
     UNSUPPORTED_ENGINE = "UNSUPPORTED_ENGINE"

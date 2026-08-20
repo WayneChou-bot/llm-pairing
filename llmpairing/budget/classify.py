@@ -109,6 +109,13 @@ def _verdict_at(model: ModelSpec, quant: QuantVariant, wl: Workload, ctx: int,
     at this ctx even with offload, but fully loadable at a short ctx)
     -> OOM_AT_LOAD.
     """
+    # review #5 P1 (owner-ratified): a ctx the model cannot attend at is
+    # refused BEFORE any memory math — "memory suffices" must never be
+    # spoken as "it runs". Curve points are pre-filtered to <= model max,
+    # so this fires only for an out-of-range target request.
+    if ctx > model.max_position_embeddings:
+        return (Verdict.CTX_EXCEEDS_MODEL_MAX, None, 0,
+                ["CTX_TARGET_EXCEEDS_MODEL_MAX"])
     d = _conservative_demand_at(model, quant, wl, ctx)
     band = _band_verdict(d, b_with_safety, b_no_safety)
     if band is Verdict.FITS:

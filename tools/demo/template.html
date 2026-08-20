@@ -314,6 +314,8 @@ const VERDICT = {
     why:"此模型架構尚未收錄於支援白名單，記憶體公式未經驗證。依 R-2 紀律：不知道就說不知道，不猜測。" },
   UNSUPPORTED_TOPOLOGY:{ ic:"—", label:"拓撲不支援", cls:"UNSUPPORTED", why:"多 GPU 拓撲 v1 不支援。" },
   UNSUPPORTED_ENGINE:{ ic:"—", label:"引擎不支援", cls:"UNSUPPORTED", why:"v1 僅支援 llama.cpp。" },
+  CTX_EXCEEDS_MODEL_MAX:{ ic:"⊘", label:"超過模型上限", cls:"UNSUPPORTED",
+    why:"要求的 context 超過模型宣告的上限——這不是記憶體問題，任何硬體都跑不了這個長度。把 context 調到模型上限以內即可。" },
 };
 const FLAG_TEXT = {
   ACTIVATION_PRIOR_PENDING_T003:"activation 為文獻先驗區間上界，待 T-003 實測校準",
@@ -346,6 +348,7 @@ if(!ZH){
   Object.assign(VERDICT.UNSUPPORTED_ARCH,{label:"Not supported",why:"This architecture is not on the support whitelist and its memory formulas are unverified. Per the R-2 rule: if we don't know, we say so — we never guess."});
   Object.assign(VERDICT.UNSUPPORTED_TOPOLOGY,{label:"Topology unsupported",why:"Multi-GPU topologies are not supported in v1."});
   Object.assign(VERDICT.UNSUPPORTED_ENGINE,{label:"Engine unsupported",why:"v1 supports llama.cpp only."});
+  Object.assign(VERDICT.CTX_EXCEEDS_MODEL_MAX,{label:"Exceeds model max",why:"The requested context exceeds the model's declared maximum — not a memory problem; no hardware can run this length. Lower the context to within the model's limit."});
   Object.assign(FLAG_TEXT,{
     ACTIVATION_PRIOR_PENDING_T003:"activation uses a literature-prior upper bound, pending T-003 calibration",
     IGPU_ESTIMATE_LOW_CONFIDENCE:"iGPU shared memory is a structural approximation — low confidence (forced T0)",

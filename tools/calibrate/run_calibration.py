@@ -74,6 +74,39 @@ def load_catalog_model(catalog_id: str, quant_label: str) -> tuple[ModelSpec, An
     raise SystemExit(f"{catalog_id} not found in {snaps[-1].name}")
 
 
+def detect_pool(ps_models: list[dict[str, Any]], ollama_model: str) -> str:
+    """Review #5 P2: label the memory pool from THIS run's model only.
+
+    The pool label decides which scenarios this calibration may ever
+    apply to (strict pool gate), so it must come from the calibration
+    model's own placement — background models loaded in Ollama used to
+    vote via the old loop and could win. Partial offload is refused
+    outright: a product measured across two memory pools would poison
+    both scenarios (R-2: refuse, never the old ">50% VRAM" guess).
+    """
+    mine = [p for p in ps_models
+            if p.get("name") == ollama_model or p.get("model") == ollama_model]
+    if not mine:
+        raise ValueError(
+            f"calibration model {ollama_model!r} not found in ollama "
+            "/api/ps — cannot verify placement, refusing to label the pool")
+    entry = mine[0]
+    size = int(entry.get("size") or 0)
+    vram = int(entry.get("size_vram") or 0)
+    if size <= 0:
+        raise ValueError(f"ollama /api/ps reports no size for "
+                         f"{ollama_model!r} — cannot verify placement")
+    if vram == 0:
+        return "cpu"
+    if vram >= size:
+        return "gpu"
+    raise ValueError(
+        f"{ollama_model!r} is partially offloaded ({vram}/{size} bytes in "
+        "VRAM) — a calibration product measured across two memory pools "
+        "would poison both scenarios; re-run fully on CPU (e.g. "
+        "num_gpu=0) or fully on GPU")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="LLM pairing calibration runner")
     ap.add_argument("--ollama-model", required=True)
@@ -98,7 +131,7 @@ def main() -> int:
     products: list[float] = []
     tps_seen: list[float] = []
     ctx_mids: list[int] = []
-    pool = "cpu"
+    pool: str | None = None
     for i in range(args.runs + 1):  # first run = load/warmup, not scored
         r = _http("/api/generate", {
             "model": args.ollama_model,
@@ -108,6 +141,16 @@ def main() -> int:
                         "num_predict": args.num_predict,
                         "temperature": 0, "seed": 42},
         })
+        if i == 0:
+            # review #5 P2: pool detection consults THIS model's own
+            # placement, runs even if the warmup lacks timings, and
+            # refuses ambiguity instead of guessing
+            ps = _http("/api/ps", timeout=10).get("models", [])
+            try:
+                pool = detect_pool(ps, args.ollama_model)
+            except ValueError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                return 1
         ec, ed = r.get("eval_count"), r.get("eval_duration")
         pc = r.get("prompt_eval_count") or 0
         if not ec or not ed:
@@ -118,11 +161,7 @@ def main() -> int:
         ctx_mid = int(pc + ec / 2)
         bpt = _bytes_per_token(spec, quant, wl, ctx_mid)
         if i == 0:
-            print(f"  warmup: {tps:.2f} tok/s (not scored)")
-            ps = _http("/api/ps", timeout=10).get("models", [])
-            for p in ps:
-                if p.get("size") and p.get("size_vram", 0) > 0:
-                    pool = "gpu" if p["size_vram"] / p["size"] > 0.5 else "cpu"
+            print(f"  warmup: {tps:.2f} tok/s (not scored, pool={pool})")
             continue
         products.append(tps * bpt)
         tps_seen.append(round(tps, 2))
@@ -139,6 +178,11 @@ def main() -> int:
     from llmpairing.probe.cpu import collect_cpu
     from llmpairing.probe.fingerprint import machine_fingerprint
     from llmpairing.probe.memory import collect_memory
+
+    if pool is None:  # detection is mandatory — no pool label, no file
+        print("ERROR: pool never determined (warmup did not run?) — "
+              "refusing to write a calibration", file=sys.stderr)
+        return 1
 
     _diags: list[str] = []
     machine_id = machine_fingerprint(

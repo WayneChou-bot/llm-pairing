@@ -38,6 +38,7 @@ VERDICT_LABEL = {
     "PARTIAL_OFFLOAD": "可跑・會變慢",
     "OOM_AT_CONTEXT": "長文跑不動",
     "OOM_AT_LOAD": "跑不動",
+    "CTX_EXCEEDS_MODEL_MAX": "超過模型 context 上限",
 }
 KIND_LABEL = {"CAPABILITY": "🏆 能力優先", "SPEED": "⚡ 速度優先",
               "LONG_CONTEXT": "📜 長文優先"}
@@ -60,6 +61,10 @@ def note_text(code: str, params: dict[str, object]) -> str:
     if code == "COMMUNITY_EXCLUDED":
         return (f"已排除 {params.get('count', '?')} 個社群來源模型"
                 "（--include-community 可納入）")
+    if code == "CTX_EXCEEDS_MODEL_MAX":
+        return (f"其中 {params.get('count', '?')} 個模型的 context 上限低於"
+                f"你要求的 {ctx}——這不是記憶體問題，任何硬體都跑不了；"
+                "請把 --ctx 降到模型上限以內")
     return f"{code} {params}"
 
 
@@ -125,9 +130,37 @@ def gather_candidates(hw: HardwareProfile,
     return cands
 
 
+def _scenario_calibration(
+    scen_hw: HardwareProfile, calibrations: list[MachineCalibration],
+    pool_name: str,
+) -> tuple[MachineCalibration | None, str | None]:
+    """Pick + gate a calibration for one scenario (review #5 P1).
+
+    Returns (calibration-to-apply | None, footer_flag | None). The
+    identity gate is the same calibration_applies used inside predict —
+    the CLI never hands predict a file the gate would refuse, so the
+    footer and the per-cell math can no longer disagree. A pool mismatch
+    is the normal dual-scenario state (quietly uncalibrated); machine-
+    identity refusals are surfaced so the footer can say WHY there is no
+    T1 — a downloaded repo carrying someone else's calibration file must
+    never render 「本機已校準」.
+    """
+    from llmpairing.predict.calibration import calibration_applies
+    chosen = pick_calibration(scen_hw, calibrations)
+    if chosen is None:
+        return None, None
+    applies, flag = calibration_applies(scen_hw, chosen, pool_name)
+    if applies:
+        return chosen, None
+    if flag == "CALIBRATION_POOL_MISMATCH_IGNORED":
+        return None, None
+    return None, flag
+
+
 def format_recommendation(machine_label: str, rr: RecResult,
                           repo_of: dict[str, str], *, catalog_name: str,
-                          calibrated: bool) -> str:
+                          calibrated: bool,
+                          cal_ignored_flag: str | None = None) -> str:
     """Render one scenario's picks as terminal text. Pure."""
     lines = [f"◆ {machine_label}"]
     if not rr.picks:
@@ -165,19 +198,38 @@ def format_recommendation(machine_label: str, rr: RecResult,
         if rr.picks:
             lines.append(f"  · {note_text(n.code, dict(n.params))}")
     lines.append("")
+    if calibrated:
+        speed_txt = "T1（本機已校準）"
+    elif cal_ignored_flag == "CALIBRATION_MACHINE_MISMATCH_IGNORED":
+        speed_txt = ("T0——校準檔與本機指紋不符，已忽略"
+                     "（在這台機器重跑 T-003 校準即可升級）")
+    elif cal_ignored_flag == "CALIBRATION_PROFILE_HAS_NO_MACHINE_ID":
+        speed_txt = ("T0——硬體檔缺機器指紋，校準檔已忽略"
+                     "（重跑 llmpairing probe 產生新檔即可）")
+    else:
+        speed_txt = "未經本機校準（可跑 T-003 校準升級）"
     lines.append(f"  目錄：{catalog_name}・記憶體判定 T0（規格估算）・速度 "
-                 + ("T1（本機已校準）" if calibrated
-                    else "未經本機校準（可跑 T-003 校準升級）"))
+                 + speed_txt)
     return "\n".join(lines)
 
 
-def _load_catalog(catalog_dir: Path) -> tuple[str, list[tuple[ModelSpec, dict[str, Any]]]]:
+def _load_catalog(catalog_dir: Path, *, allow_fallback: bool = False,
+                  ) -> tuple[str, list[tuple[ModelSpec, dict[str, Any]]]]:
     snaps = sorted(catalog_dir.glob("catalog-*.json"))
+    # review #5 P2: first-run UX — with the DEFAULT ./catalog, an
+    # editable install run from any cwd falls back to the repo
+    # checkout's own bundled snapshots instead of failing about the
+    # working directory. An explicit --catalog-dir is always respected
+    # (a typo must fail loudly, never silently use other data).
+    fallback = Path(__file__).resolve().parents[1] / "catalog"
+    searched = f"{catalog_dir.resolve()}/catalog-*.json"
+    if not snaps and allow_fallback and fallback != catalog_dir.resolve():
+        snaps = sorted(fallback.glob("catalog-*.json"))
+        searched += f"，也查過 repo 內建的 {fallback}"
     if not snaps:
         raise SystemExit(
-            f"找不到目錄快照（{catalog_dir.resolve()}/catalog-*.json）。\n"
-            f"llmpairing recommend 預設從目前工作目錄找 ./catalog——請在 "
-            f"repo 根目錄執行，或用 --catalog-dir 指定快照資料夾；"
+            f"找不到目錄快照（{searched}）。\n"
+            f"請用 --catalog-dir 指定快照資料夾；"
             f"還沒有快照就先跑 tools/catalog/build_catalog.py")
     raw = snaps[-1].read_bytes()
     sidecar = snaps[-1].with_suffix(".sha256")
@@ -222,7 +274,9 @@ def _recommend_cmd(args: argparse.Namespace) -> int:
             print(f"掃描失敗: {exc}", file=sys.stderr)
             return 1
 
-    catalog_name, entries = _load_catalog(Path(args.catalog_dir))
+    catalog_name, entries = _load_catalog(
+        Path(args.catalog_dir),
+        allow_fallback=args.catalog_dir == "catalog")
     calibrations = _load_calibrations(Path(args.calibration_dir))
     repo_of = {spec.model_id: str(meta.get("gguf_repo") or "")
                for spec, meta in entries}
@@ -237,17 +291,20 @@ def _recommend_cmd(args: argparse.Namespace) -> int:
 
     print("LLM pairing — 為這台機器推薦（誠實優先：不知道就說不知道）\n")
     for label, scen_hw, is_cpu_pool in scenarios:
-        chosen = pick_calibration(scen_hw, calibrations)
-        cal = chosen if (chosen is not None
-                         and chosen.pool == ("cpu" if is_cpu_pool
-                                             else "gpu")) else None
+        # review #5 P1: gate BEFORE handing to predict; the footer claim
+        # is then derived from what the picks actually carry (evidence),
+        # never from mere file presence
+        cal, cal_flag = _scenario_calibration(
+            scen_hw, calibrations, "cpu" if is_cpu_pool else "gpu")
         cands = gather_candidates(scen_hw, entries, calibration=cal,
                                   target_ctx=args.ctx, long_ctx=args.long_ctx)
         rr = recommend(cands, target_ctx=args.ctx, long_ctx=args.long_ctx,
                        include_community=args.include_community)
+        calibrated = any(p.candidate.tps_tier == "T1" for p in rr.picks)
         print(format_recommendation(label, rr, repo_of,
                                     catalog_name=catalog_name,
-                                    calibrated=cal is not None))
+                                    calibrated=calibrated,
+                                    cal_ignored_flag=cal_flag))
         print()
     return 0
 

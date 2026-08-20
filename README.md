@@ -11,9 +11,9 @@ guess.** Every number carries an evidence tier (T0 = spec-sheet
 estimate, T1 = calibrated on your machine, T2 = exact), every
 approximation carries an honesty flag, and the system prefers a
 conservative refusal (false reject) over an inflated promise (false
-accept — design target ≤ 2%, validated against a growing
-ground-truth confusion matrix; 10 cells scored so far: 8 true accepts,
-0 false accepts).
+accept — **design target** ≤ 2%, not yet a proven rate). Early
+validation on one Windows machine across two model families and
+multiple context lengths; no false accepts observed so far.
 
 ## What it does
 
@@ -41,6 +41,8 @@ ground-truth confusion matrix; 10 cells scored so far: 8 true accepts,
 Requires Python 3.11+. Conda recommended:
 
 ```bash
+git clone https://github.com/WayneChou-bot/llm-pairing.git
+cd llm-pairing
 conda create -n llmpairing python=3.11
 conda activate llmpairing
 pip install -e ".[dev]"
@@ -53,6 +55,9 @@ llmpairing probe                 # see what the read-only scan finds
 llmpairing recommend             # scan + pair + Top-3 picks with download commands
 llmpairing recommend --ctx 32768 # re-rank for long-context use
 ```
+
+`recommend` looks for `./catalog` first and falls back to the snapshots
+bundled with the repo checkout, so it works from any directory.
 
 Going further (run from the repo root):
 
@@ -115,8 +120,9 @@ its own `license` field; check it before downloading.
 核心信念：**不知道就說不知道，絕不用猜的**。每個數字都標注證據等級
 （T0 = 規格表估算、T1 = 本機實測校準、T2 = 精確值），每個近似都掛
 誠實旗標，寧可保守拒絕（false-reject）也不誇口承諾（false-accept，
-設計目標 ≤ 2%——以持續累積的 ground-truth 混淆矩陣驗證中，
-目前 10 格計分：8 個 true accept、0 個 false accept）。
+**設計目標** ≤ 2%，尚非已證明的準確率）。目前為早期驗證：單一台
+Windows 機器、兩個模型家族、多種 context 長度，尚未觀察到任何
+false accept。
 
 ## 它做什麼
 
@@ -139,6 +145,8 @@ its own `license` field; check it before downloading.
 需求：Python 3.11+。建議 conda：
 
 ```bash
+git clone https://github.com/WayneChou-bot/llm-pairing.git
+cd llm-pairing
 conda create -n llmpairing python=3.11
 conda activate llmpairing
 pip install -e ".[dev]"
@@ -151,6 +159,9 @@ llmpairing probe                 # 看看掃描到什麼（唯讀）
 llmpairing recommend             # 掃描 + 配對 + Top-3 推薦（附下載指令）
 llmpairing recommend --ctx 32768 # 長文條件下重新推薦
 ```
+
+`recommend` 會先找目前目錄的 `./catalog`，找不到就退回 repo 內建的
+快照，所以在任何目錄執行都可以。
 
 進一步（都在 repo 根目錄執行）：
 

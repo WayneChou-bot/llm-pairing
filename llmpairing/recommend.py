@@ -120,6 +120,16 @@ def recommend(cands: list[RecCandidate], *, target_ctx: int = 8_192,
     if not pool:
         notes.append(RecNote(code="NO_FIT_AT_TARGET",
                              params={"ctx": target_ctx}))
+        # review #5 P1: if the request itself defeated models (ctx beyond
+        # their declared max), say WHY — that is actionable, a generic
+        # no-fit is not
+        exceeded = {c.model_id for c in cands
+                    if c.ctx == target_ctx
+                    and c.verdict == "CTX_EXCEEDS_MODEL_MAX"}
+        if exceeded:
+            notes.append(RecNote(code="CTX_EXCEEDS_MODEL_MAX",
+                                 params={"ctx": target_ctx,
+                                         "count": len(exceeded)}))
         return RecResult(picks=[], notes=notes)
 
     # -- capability: largest active params, tie -> larger weights (higher quant)

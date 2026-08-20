@@ -276,8 +276,7 @@ footer code { font-size:11px; }
     <span id="foothonest">誠實聲明：所有數值為 <b>T0（規格表估算）</b>，activation 採 [0.5, 1.5] GiB
     區間上界（待 T-003 校準）；白名單外的架構一律回報「尚未支援」而非猜測（R-2）。</span>
     <span id="fixnote">硬體與模型皆為合成 fixtures，非真實產品量測。</span><br>
-    LLM pairing・T-002 pure core・commit <code id="commit"></code>・
-    分類決策鏈 SPEC §4.4・保守優先（FA ≤ 2% 目標）
+    <span id="foottail">LLM pairing・T-002 pure core・commit </span><code id="commit"></code>
   </footer>
 </div>
 
@@ -408,7 +407,22 @@ const TT = ZH ? {
   fresh:(d,days)=>` 目錄建置於 ${d}（${days} 天前）`+(days>30?"・⚠ 已超過 30 天，建議重建目錄":"")+"。",
   fixRealCat:c=>`🔍 標示者為真實掃描機器；「參考機」為已知頻寬的合成對照。模型目錄快照：${c}。`,
   fixReal:"🔍 標示者為真實掃描機器；模型為合成 fixtures。", fixCat:c=>`硬體為合成 fixtures；模型來自目錄快照 ${c}。`,
+  freshSrc:d=>`（來源資料抓取於 ${d}——時效以此為準）`,
+  footTail:"LLM pairing・T-002 純函式核心・分類決策鏈 SPEC §4.4・保守優先（FA ≤ 2% 為設計目標）・commit ",
+  copyFail:"複製失敗—請手動選取",
+  ariaSearch:"搜尋模型", ariaMatrix:"硬體與模型配對結果矩陣", ariaFilters:"篩選條件", ariaTabs:"機器情境", ariaReco:"推薦結果",
   closeAria:"關閉",
+  trust:{official:"官方",trusted_quantizer:"可信量化者",community:"社群"},
+  caveat:{
+    TIGHT_FALLBACK:"TIGHT：剩餘記憶體低於安全緩衝——其他程式一搶記憶體就可能失敗",
+    SPEED_RELATIVE_ORDER:"速度為相對排序（依每 token 記憶體流量）；跑一次 T-003 校準可升級為絕對值",
+    COMMUNITY_SOURCE:"社群來源——內容與品質未經審核",
+  },
+  note:(c,p)=>c==="NO_FIT_AT_TARGET"?`在 context ${p.ctx} 下沒有能完整載入的模型——不勉強推薦（R-2）`
+    :c==="NO_FIT_AT_LONG"?`context ${p.ctx} 下沒有可完整載入的組合——長文需求請降低 context`
+    :c==="COMMUNITY_EXCLUDED"?`已排除 ${p.count} 個社群來源模型（預設只推薦官方與可信量化者）`
+    :`${c}`,
+  srcPub:"發布者：", srcBase:"base 模型：", srcRel:{self:"原始發布",quantized:"量化版",derivative:"社群改版"},
 } : {
   title:"LLM pairing — hardware × model pairing demo", h1small:"hardware × model pairing matrix",
   subBase:"Click any cell for the memory breakdown, ctx ceiling, tok/s prediction and trade-off curve.",
@@ -447,20 +461,30 @@ const TT = ZH ? {
   fresh:(d,days)=>` Catalog built ${d} (${days} days ago)`+(days>30?" · ⚠ over 30 days old — consider rebuilding":"")+".",
   fixRealCat:c=>`🔍 marks the real scanned machine; \"reference\" machines are synthetic baselines with known bandwidth. Catalog snapshot: ${c}.`,
   fixReal:"🔍 marks the real scanned machine; models are synthetic fixtures.", fixCat:c=>`Hardware entries are synthetic fixtures; models come from catalog snapshot ${c}.`,
+  freshSrc:d=>` (source data fetched ${d} — staleness measured from this)`,
+  footTail:"LLM pairing · T-002 pure core · verdict chain SPEC §4.4 · conservative-first (FA ≤ 2% design target) · commit ",
+  copyFail:"Copy failed — select manually",
+  ariaSearch:"Search models", ariaMatrix:"hardware × model pairing matrix", ariaFilters:"filters", ariaTabs:"machine scenario", ariaReco:"recommendations",
   closeAria:"Close",
+  trust:{official:"official",trusted_quantizer:"trusted quantizer",community:"community"},
+  caveat:{
+    TIGHT_FALLBACK:"TIGHT: headroom is below the safety buffer — other apps grabbing memory may cause failures",
+    SPEED_RELATIVE_ORDER:"Speed is a relative ranking (per-token memory traffic); one T-003 calibration run upgrades it to absolute",
+    COMMUNITY_SOURCE:"Community source — content and quality unreviewed",
+  },
+  note:(c,p)=>c==="NO_FIT_AT_TARGET"?`No model fully loads at context ${p.ctx} — no forced recommendation (R-2)`
+    :c==="NO_FIT_AT_LONG"?`Nothing fully loads at context ${p.ctx} — lower the context for long-document use`
+    :c==="COMMUNITY_EXCLUDED"?`${p.count} community-source model(s) excluded (defaults recommend official + trusted quantizers only)`
+    :`${c}`,
+  srcPub:"Publisher: ", srcBase:"base model: ", srcRel:{self:"original release",quantized:"quantized",derivative:"community derivative"},
 };
 const hlabel = h => ZH ? h.label : (h.label_en || h.label);
-const CAVEAT_EN = {
-  "TIGHT：剩餘記憶體低於安全緩衝——其他程式一搶記憶體就可能失敗":
-    "TIGHT: headroom is below the safety buffer — other apps grabbing memory may cause failures",
-  "速度為相對排序（依每 token 記憶體流量的物理量）；絕對 tok/s 未校準——跑一次 T-003 校準即可升級":
-    "Speed is a relative ranking (by physical per-token memory traffic); absolute tok/s is uncalibrated — one T-003 calibration run upgrades it",
-};
+/* caveats are message CODES since review #4 — rendered via TT.caveat */
 const NOTE_EN = {
   "無頻寬資料（spec_db 未收錄此硬體）":"no bandwidth data (this hardware is not in spec_db yet)",
   "速度模型拒絕：目錄資料不一致（V-P5 哨兵）":"speed model refused: inconsistent catalog data (V-P5 sentinel)",
 };
-const trCaveat = c => ZH ? c : (CAVEAT_EN[c] || c);
+const trCaveat = c => TT.caveat[c] || c;
 const trNote = n => ZH ? n : (NOTE_EN[n] || n);
 function trReason(p){
   if(ZH) return p.reason;
@@ -486,6 +510,15 @@ function trReason(p){
   document.getElementById("msearch").placeholder = TT.searchPh;
   document.getElementById("runonly").textContent = TT.runOnly;
   document.getElementById("foothonest").innerHTML = TT.footHonest;
+  document.getElementById("foottail").textContent = TT.footTail;
+  document.getElementById("themebtn").textContent = TT.themeAuto;
+  document.getElementById("msearch").setAttribute("aria-label", TT.ariaSearch);
+  document.getElementById("matrix").setAttribute("aria-label", TT.ariaMatrix);
+  document.querySelector(".filters").setAttribute("aria-label", TT.ariaFilters);
+  document.getElementById("recotabs").setAttribute("aria-label", TT.ariaTabs);
+  document.getElementById("recosec").setAttribute("aria-label", TT.ariaReco);
+  document.getElementById("drawer").setAttribute("aria-hidden","true");
+  document.getElementById("drawer").inert = true;
   document.getElementById("tierbadge").innerHTML = TT.badge0;
   document.getElementById("dclose").setAttribute("aria-label", TT.closeAria);
   const lb=document.getElementById("langbtn");
@@ -634,13 +667,15 @@ function renderReco(){
       <span class="mspec">${esc(p.quant)}・${p.weights_gib??"?"} GiB・active ${p.params_active_b}B・context ${fmtCtx(p.ctx)}</span>
       <span class="vchip v-${v.cls}"><span class="ic">${v.ic}</span><span class="vt">${v.label}</span></span>
       ${tps}
+      <span class="mspec">${TT.srcPub}${esc(p.publisher||"?")}・${esc(TT.trust[p.trust]||p.trust||"?")}${(p.tags||[]).length?"・⚠ "+p.tags.map(esc).join(" / "):""}</span>
       <span class="why">${esc(trReason(p))}</span>
       ${(p.caveats||[]).map(c=>`<span class="cav">⚠ ${esc(trCaveat(c))}</span>`).join("")}`;
     b.onclick = ()=>openDrawer(p.key);
     cards.appendChild(b);
   });
   const notes = document.getElementById("reconotes");
-  notes.innerHTML = (rec.notes||[]).map(n=>`· ${esc(trNote(n))}`).join("<br>");
+  notes.innerHTML = (rec.notes||[]).map(n=>
+    `· ${esc(typeof n==="string" ? trNote(n) : TT.note(n.code, n.params||{}))}`).join("<br>");
 }
 
 /* ---------- matrix ---------- */
@@ -663,7 +698,8 @@ function render(){
   let html=`<thead><tr><th scope='col'>${TT.corner}</th>`;
   models.forEach(m=>{
     const lic = m.license ? `・${esc(m.license)}` : "";
-    html+=`<th scope='col'>${esc(m.label)}<span class='q'>${esc(m.quant)}・${m.weights_gib??"?"} GiB${lic}</span></th>`;
+    const src = m.publisher ? `<span class='q'>${esc(m.publisher)}・${esc(TT.trust[m.trust]||m.trust||"?")}${(m.tags||[]).length?"・⚠ "+m.tags.map(esc).join("/"):""}</span>` : "";
+    html+=`<th scope='col'>${esc(m.label)}<span class='q'>${esc(m.quant)}・${m.weights_gib??"?"} GiB${lic}</span>${src}</th>`;
   });
   html+="</tr></thead><tbody>";
   DATA.hardware.forEach(h=>{
@@ -672,7 +708,7 @@ function render(){
     html+=`<tr><th scope='row'>${esc(hlabel(h))}<span class='hwsub'>${spec}</span></th>`;
     models.forEach(m=>{
       const key=`${h.id}|${m.id}|${sel.ctx}|${sel.kv}`;
-      const r=DATA.results[key];
+      const r=DATA.results[key]||{};
       const v=VERDICT[r.v]||VERDICT.UNSUPPORTED_ARCH;
       html+=`<td><button class="cell v-${v.cls}" data-key="${esc(key)}"
         aria-label="${esc(hlabel(h))} × ${esc(m.label)} ${esc(m.quant)}: ${v.label}">
@@ -696,7 +732,8 @@ function render(){
 function openDrawer(key){
   const [hwId,mId,ctx,kv]=key.split("|");
   const h=DATA.hardware.find(x=>x.id===hwId), m=DATA.models.find(x=>x.id===mId);
-  const r=DATA.results[key]; const v=VERDICT[r.v]||VERDICT.UNSUPPORTED_ARCH;
+  const r=DATA.results[key]; if(!r||!h||!m) return;
+  const v=VERDICT[r.v]||VERDICT.UNSUPPORTED_ARCH;
   const body=document.getElementById("dbody");
   let html=`<h3 id="dtitle">${esc(hlabel(h))} × ${esc(m.label)} <span style="color:var(--ink-muted)">${esc(m.quant)}</span></h3>
   <p class="dsub">${TT.dsub(fmtCtx(+ctx), kv, m.params_b, m.active_b!==m.params_b?TT.dsubAct(m.active_b):"", r.tier??"T0")}</p>
@@ -771,7 +808,10 @@ function openDrawer(key){
       <div class="getcmd"><code>${esc(oll)}</code><button class="copybtn" data-copy="${esc(oll)}">${TT.copy}</button></div>
       <div class="getcmd"><code>${esc(lcp)}</code><button class="copybtn" data-copy="${esc(lcp)}">${TT.copy}</button></div>
       <p class="axisnote">${TT.srcRepo}<a href="https://huggingface.co/${esc(m.repo)}" target="_blank" rel="noopener">${esc(m.repo)}</a>${
-        m.files&&m.files.length?`${TT.exactFiles}${m.files.map(esc).join(TT.fileSep)}`:""}</p>`;
+        m.files&&m.files.length?`${TT.exactFiles}${m.files.map(esc).join(TT.fileSep)}`:""}</p>
+      <p class="axisnote">${TT.srcPub}${esc(m.publisher||"?")}・${esc(TT.trust[m.trust]||m.trust||"?")}・${esc(TT.srcRel[m.relation]||m.relation||"?")}${
+        m.base&&m.relation!=="self"?`・${TT.srcBase}${esc(m.base)}`:""}${
+        (m.tags||[]).length?`・⚠ ${m.tags.map(esc).join(" / ")}`:""}</p>`;
   }
   if(r.flags && r.flags.length){
     html+=`<div class="sechead">${TT.secFlags}</div>`;
@@ -782,11 +822,19 @@ function openDrawer(key){
   body.querySelectorAll(".copybtn").forEach(b=>b.onclick=()=>{
     const t=b.dataset.copy;
     const done=()=>{b.textContent=TT.copied;setTimeout(()=>b.textContent=TT.copy,1400);};
+    const fail=()=>{  // review #4 P3: never fake success
+      b.textContent=TT.copyFail; setTimeout(()=>b.textContent=TT.copy,2200);
+      const code=b.previousElementSibling;
+      if(code){ const r=document.createRange(); r.selectNodeContents(code);
+        const sel=getSelection(); sel.removeAllRanges(); sel.addRange(r); }
+    };
     if(navigator.clipboard&&navigator.clipboard.writeText)
-      navigator.clipboard.writeText(t).then(done).catch(done);
-    else done();
+      navigator.clipboard.writeText(t).then(done).catch(fail);
+    else fail();
   });
   lastFocus = document.activeElement;
+  const dr=document.getElementById("drawer");
+  dr.removeAttribute("aria-hidden"); dr.inert=false;
   document.querySelector(".wrap").setAttribute("inert","");
   document.getElementById("ovl").classList.add("open");
   document.getElementById("drawer").classList.add("open");
@@ -812,7 +860,9 @@ function sparkline(pts){
 let lastFocus=null;
 function closeDrawer(){
   document.getElementById("ovl").classList.remove("open");
-  document.getElementById("drawer").classList.remove("open");
+  const dr=document.getElementById("drawer");
+  dr.classList.remove("open");
+  dr.setAttribute("aria-hidden","true"); dr.inert=true;  // review #4 P3
   document.querySelector(".wrap").removeAttribute("inert");
   if(lastFocus && lastFocus.focus){ lastFocus.focus(); lastFocus=null; }
 }
@@ -838,13 +888,19 @@ document.getElementById("commit").textContent=DATA.commit;
   if (Object.values(DATA.results).some(r=>r.calibrated))
     document.getElementById("tierbadge").innerHTML = TT.badgeCal;
 })();
+const fmtDate = d => d.toLocaleString(ZH ? "zh-TW" : "en-US");
 (function freshness(){
   if(!DATA.catalog_generated_at) return;
   const gen=new Date(DATA.catalog_generated_at);
   if(isNaN(gen)) return;
-  const days=Math.floor((Date.now()-gen.getTime())/86400000);
+  // review #4 P2: age is measured from when the SOURCES were fetched,
+  // not when the snapshot file was written (cache reuse hides staleness)
+  const srcD = DATA.catalog_sources_latest ? new Date(DATA.catalog_sources_latest) : null;
+  const ageFrom = (srcD && !isNaN(srcD)) ? srcD : gen;
+  const days=Math.floor((Date.now()-ageFrom.getTime())/86400000);
   const el=document.createElement("span");
-  el.textContent=TT.fresh(gen.toLocaleString(), days);
+  el.textContent=TT.fresh(fmtDate(gen), days)
+    + ((srcD && !isNaN(srcD)) ? TT.freshSrc(fmtDate(srcD)) : "");
   const fx=document.getElementById("fixnote");
   fx.parentNode.insertBefore(el, fx.nextSibling);
 })();
@@ -863,7 +919,7 @@ document.getElementById("commit").textContent=DATA.commit;
 (function subline(){
   const real=DATA.hardware.filter(h=>h.real);
   let s=TT.subBase;
-  s = TT.subCat(DATA.catalog) + (real.length?TT.subReal(new Date(real[0].measured_at*1000).toLocaleString()):"") + (ZH?"。":". ") + s;
+  s = TT.subCat(DATA.catalog) + (real.length?TT.subReal(fmtDate(new Date(real[0].measured_at*1000))):"") + (ZH?"。":". ") + s;
   document.getElementById("subline").textContent=s;
 })();
 render();

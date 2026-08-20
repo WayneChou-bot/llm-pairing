@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from llmpairing.budget.classify import classify_fit
+from llmpairing.catalog.mapper import classify_source
 from llmpairing.predict.calibration import MachineCalibration
 from llmpairing.predict.decode import decode_bytes_per_token, predict_decode
 from llmpairing.recommend import RecCandidate, RecResult, recommend
@@ -40,6 +41,39 @@ VERDICT_LABEL = {
 }
 KIND_LABEL = {"CAPABILITY": "🏆 能力優先", "SPEED": "⚡ 速度優先",
               "LONG_CONTEXT": "📜 長文優先"}
+TRUST_LABEL = {"official": "官方", "trusted_quantizer": "可信量化者",
+               "community": "社群"}
+CAVEAT_TEXT = {
+    "TIGHT_FALLBACK": "TIGHT：剩餘記憶體低於安全緩衝——其他程式一搶記憶體就可能失敗",
+    "SPEED_RELATIVE_ORDER": "速度為相對排序（依每 token 記憶體流量）；跑一次 T-003 校準可升級為絕對值",
+    "COMMUNITY_SOURCE": "社群來源（非官方/可信量化者）——內容與品質未經審核",
+}
+
+
+def note_text(code: str, params: dict[str, object]) -> str:
+    ctx = params.get("ctx", "?")
+    if code == "NO_FIT_AT_TARGET":
+        return (f"在 context {ctx} 下，目錄中沒有能完整載入這台機器的模型"
+                "——不勉強推薦（R-2）")
+    if code == "NO_FIT_AT_LONG":
+        return f"context {ctx} 下沒有可完整載入的組合——長文需求請降低 context"
+    if code == "COMMUNITY_EXCLUDED":
+        return (f"已排除 {params.get('count', '?')} 個社群來源模型"
+                "（--include-community 可納入）")
+    return f"{code} {params}"
+
+
+def source_of(meta: dict[str, Any]) -> dict[str, Any]:
+    """Trust info from meta, backfilled for pre-review-#4 snapshots."""
+    if meta.get("trust"):
+        return {"trust": meta["trust"], "publisher": meta.get("publisher"),
+                "relation": meta.get("relation"),
+                "content_tags": meta.get("content_tags") or []}
+    repo = meta.get("gguf_repo")
+    if repo:
+        return classify_source(str(repo), meta.get("base_repo"), None, [])
+    return {"trust": "community", "publisher": None, "relation": None,
+            "content_tags": []}
 
 
 def gather_candidates(hw: HardwareProfile,
@@ -49,6 +83,7 @@ def gather_candidates(hw: HardwareProfile,
     """Run the pure pipeline over catalog entries for one machine scenario."""
     cands: list[RecCandidate] = []
     for spec, _meta in entries:
+        src = source_of(_meta)
         shown = ([q for q in spec.quants if q.label in PREVIEW_QUANTS]
                  or spec.quants[:2])
         for q in shown:
@@ -84,6 +119,8 @@ def gather_candidates(hw: HardwareProfile,
                     bytes_per_token=bpt,
                     tps=tps,
                     tps_tier=tps_tier,
+                    trust=str(src["trust"]),
+                    flags=fit.flags,
                 ))
     return cands
 
@@ -95,7 +132,7 @@ def format_recommendation(machine_label: str, rr: RecResult,
     lines = [f"◆ {machine_label}"]
     if not rr.picks:
         for n in rr.notes:
-            lines.append(f"  {n}")
+            lines.append(f"  {note_text(n.code, dict(n.params))}")
         if not rr.notes:
             lines.append("  目錄中沒有可完整載入的模型——不勉強推薦（R-2）")
     for p in rr.picks:
@@ -111,15 +148,22 @@ def format_recommendation(machine_label: str, rr: RecResult,
                      f"{c.params_active / 1e9:.1f}B・context {c.ctx:,}"
                      f"・{v}{tps}")
         lines.append(f"    {p.reason}")
+        src_bits = [TRUST_LABEL.get(c.trust, c.trust)]
+        lines.append(f"    來源信任：{'・'.join(src_bits)}")
         for cav in p.caveats:
-            lines.append(f"    ⚠ {cav}")
+            lines.append(f"    ⚠ {CAVEAT_TEXT.get(cav, cav)}")
+        for fl in p.candidate.flags:
+            if fl in ("NVIDIA_SMI_PARSER_UNVERIFIED_ON_REAL_HW",
+                      "DISCRETE_GPU_DATA_UNAVAILABLE_EXCLUDED",
+                      "UBATCH_NOT_YET_MODELED"):
+                lines.append(f"    ⚠ 旗標：{fl}")
         repo = repo_of.get(c.model_id)
         if repo:
             lines.append(f"    $ ollama run hf.co/{repo}:{c.quant}")
             lines.append(f"    $ llama-server -hf {repo}:{c.quant}")
     for n in rr.notes:
         if rr.picks:
-            lines.append(f"  · {n}")
+            lines.append(f"  · {note_text(n.code, dict(n.params))}")
     lines.append("")
     lines.append(f"  目錄：{catalog_name}・記憶體判定 T0（規格估算）・速度 "
                  + ("T1（本機已校準）" if calibrated
@@ -130,8 +174,11 @@ def format_recommendation(machine_label: str, rr: RecResult,
 def _load_catalog(catalog_dir: Path) -> tuple[str, list[tuple[ModelSpec, dict[str, Any]]]]:
     snaps = sorted(catalog_dir.glob("catalog-*.json"))
     if not snaps:
-        raise SystemExit(f"找不到目錄快照（{catalog_dir}/catalog-*.json）——"
-                         f"先執行 tools/catalog/build_catalog.py")
+        raise SystemExit(
+            f"找不到目錄快照（{catalog_dir.resolve()}/catalog-*.json）。\n"
+            f"llmpairing recommend 預設從目前工作目錄找 ./catalog——請在 "
+            f"repo 根目錄執行，或用 --catalog-dir 指定快照資料夾；"
+            f"還沒有快照就先跑 tools/catalog/build_catalog.py")
     raw = snaps[-1].read_bytes()
     sidecar = snaps[-1].with_suffix(".sha256")
     if sidecar.exists():
@@ -196,7 +243,8 @@ def _recommend_cmd(args: argparse.Namespace) -> int:
                                                        else "gpu")) else None
         cands = gather_candidates(scen_hw, entries, calibration=cal,
                                   target_ctx=args.ctx, long_ctx=args.long_ctx)
-        rr = recommend(cands, target_ctx=args.ctx, long_ctx=args.long_ctx)
+        rr = recommend(cands, target_ctx=args.ctx, long_ctx=args.long_ctx,
+                       include_community=args.include_community)
         print(format_recommendation(label, rr, repo_of,
                                     catalog_name=catalog_name,
                                     calibrated=cal is not None))
@@ -224,6 +272,9 @@ def main(argv: list[str] | None = None) -> int:
                      help="目標 context（預設 8192）")
     rec.add_argument("--long-ctx", type=int, default=32_768,
                      help="長文 context（預設 32768）")
+    rec.add_argument("--include-community", action="store_true",
+                     help="把社群來源（非官方/可信量化者）納入推薦池；"
+                          "預設排除並顯示排除數")
 
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "probe":

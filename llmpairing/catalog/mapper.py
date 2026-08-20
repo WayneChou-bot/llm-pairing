@@ -38,6 +38,73 @@ _ARCH_HANDLERS = {
 #: archs whose reference implementation defines head_dim = hidden / heads
 _DERIVE_HEAD_DIM_ARCHES = {"llama", "qwen2", "mistral"}
 
+#: review #4 P1: quantizer accounts whose GGUF conversions of a base
+#: model are treated as faithful (owner-ratified initial whitelist)
+TRUSTED_QUANTIZERS = frozenset({
+    "unsloth", "bartowski", "ggml-org", "lmstudio-community",
+})
+
+#: content markers detected from repo names / tags (never hidden)
+_CONTENT_MARKERS = ("uncensored", "abliterated", "nsfw", "roleplay", "erp")
+
+
+def _strip_gguf_suffix(repo_id: str) -> str:
+    owner, _, name = repo_id.partition("/")
+    for suf in ("-GGUF", "-gguf"):
+        if name.endswith(suf):
+            name = name[: -len(suf)]
+    return f"{owner}/{name}" if owner and name else repo_id
+
+
+def classify_source(repo_id: str, base_id: str | None,
+                    base_relation: str | None,
+                    tags: list[str]) -> dict[str, Any]:
+    """Source identity & trust (review #4 P1). Pure.
+
+    Returns {model_id, relation, trust, publisher, content_tags}:
+    - relation: "self" (repo is the model), "quantized" (faithful GGUF of
+      the base) or "derivative" (finetune/merge — its own identity)
+    - the DISPLAYED identity is the base only for quantized repos; a
+      derivative keeps its own (misleading-name fix)
+    - trust: official / trusted_quantizer / community — recommendation
+      defaults include only the first two
+    """
+    publisher = repo_id.split("/")[0].lower()
+    hay = (repo_id + " " + " ".join(tags)).lower()
+    content = [m for m in _CONTENT_MARKERS if m in hay]
+
+    if base_id is None:
+        return {"model_id": _strip_gguf_suffix(repo_id), "relation": "self",
+                "trust": "official", "publisher": publisher,
+                "content_tags": content}
+
+    base_owner = base_id.split("/")[0].lower()
+    base_name = base_id.split("/")[-1].lower()
+    repo_name = _strip_gguf_suffix(repo_id).split("/")[-1].lower()
+
+    if base_relation:
+        relation = ("quantized" if str(base_relation).lower() == "quantized"
+                    else "derivative")
+    elif repo_name == base_name:
+        relation = "quantized"  # name heuristic: faithful conversion
+    else:
+        relation = "derivative"
+
+    if relation == "quantized":
+        if publisher == base_owner:
+            trust = "official"
+        elif publisher in TRUSTED_QUANTIZERS:
+            trust = "trusted_quantizer"
+        else:
+            trust = "community"
+        model_id = base_id
+    else:
+        trust = "community"
+        model_id = _strip_gguf_suffix(repo_id)
+
+    return {"model_id": model_id, "relation": relation, "trust": trust,
+            "publisher": publisher, "content_tags": content}
+
 _QUANT_RE = re.compile(
     r"(?:^|[-._])((?:I?Q\d(?:_[A-Z0-9]+)*)|MXFP4(?:_[A-Z0-9]+)*|F16|F32|BF16)"
     r"(?:[-._]|$)", re.IGNORECASE

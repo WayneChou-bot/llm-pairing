@@ -89,7 +89,8 @@ class HardwareProfile(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal["1.0", "1.1"]  # 1.1 (S4): adds probe_notes
+    #: 1.1 (S4): adds probe_notes; 1.2 (review #4): adds machine_id
+    schema_version: Literal["1.0", "1.1", "1.2"]
     probe_tier: Tier
     platform: Literal["windows", "darwin", "linux"]
     measured_at_unix: int = Field(ge=0)  # display only — never used in computation
@@ -102,6 +103,10 @@ class HardwareProfile(BaseModel):
     #: parser's UNVERIFIED_ON_REAL_HW marker) — classify surfaces these
     #: into every verdict's flags. Additive; default keeps 1.0 semantics.
     probe_notes: list[str] = Field(default_factory=list)
+    #: v1.2: one-way hardware fingerprint (probe/fingerprint.py) — lets a
+    #: MachineCalibration prove it was measured on THIS machine. None on
+    #: old profiles: identity unverifiable -> calibration refuses to apply.
+    machine_id: str | None = None
 
     @model_validator(mode="after")
     def _apple_required_on_darwin(self) -> "HardwareProfile":

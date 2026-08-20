@@ -134,7 +134,16 @@ def main() -> int:
         print("not enough scored runs", file=sys.stderr)
         return 1
 
-    machine_id = socket.gethostname().lower().replace(" ", "-")
+    # review #4 P1: machine_id is the same one-way fingerprint the probe
+    # stamps on HardwareProfile — calibration only applies when they match
+    from llmpairing.probe.cpu import collect_cpu
+    from llmpairing.probe.fingerprint import machine_fingerprint
+    from llmpairing.probe.memory import collect_memory
+
+    _diags: list[str] = []
+    machine_id = machine_fingerprint(
+        socket.gethostname(), collect_cpu(_diags).model,
+        collect_memory(_diags).total_bytes)
     cal = MachineCalibration(
         schema_version="1",
         machine_id=machine_id,

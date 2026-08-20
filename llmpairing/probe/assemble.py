@@ -6,7 +6,10 @@ violations are T-001 bugs, never downstream surprises.
 """
 from __future__ import annotations
 
+import platform as _platform
+
 from llmpairing.probe.cpu import collect_cpu
+from llmpairing.probe.fingerprint import machine_fingerprint
 from llmpairing.probe.gpu_nvidia import enrich_nvidia
 from llmpairing.probe.gpu_windows import collect_video_controllers
 from llmpairing.probe.memory import collect_memory
@@ -49,14 +52,18 @@ def build_profile(diags: list[str], *, platform_name: str,
             f"(T-001 S4/S6) — no accelerators reported"
         )
 
+    cpu = collect_cpu(diags)
+    mem = collect_memory(diags)
     return HardwareProfile(
-        schema_version="1.1" if probe_notes else "1.0",
+        schema_version="1.2",
         probe_tier=Tier.T0,
         platform=platform_name,  # type: ignore[arg-type]
         measured_at_unix=measured_at_unix,
-        cpu=collect_cpu(diags),
-        system_memory=collect_memory(diags),
+        cpu=cpu,
+        system_memory=mem,
         accelerators=accelerators,
         apple=None,
         probe_notes=probe_notes,
+        machine_id=machine_fingerprint(_platform.node(), cpu.model,
+                                       mem.total_bytes),
     )

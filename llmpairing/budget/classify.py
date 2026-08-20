@@ -96,28 +96,55 @@ def _ram_pool_budget(hw: HardwareProfile, wl: Workload) -> int:
     return int(hw.system_memory.available_bytes * (1 - wl.safety_margin_ratio))
 
 
+def _verdict_at(model: ModelSpec, quant: QuantVariant, wl: Workload, ctx: int,
+                b_with_safety: int, b_no_safety: int,
+                ram_only: bool, ram_budget: int,
+                ) -> tuple[Verdict, int | None, int, list[str]]:
+    """A6: THE single verdict-at-one-ctx path — the main verdict is this
+    function at the target ctx, the trade-off curve is this function at
+    each sampled ctx. Returns (verdict, g_layers, spill_bytes, notes).
+
+    Order (owner ruling 2026-08-20, amendment A6): FITS / TIGHT ->
+    PARTIAL_OFFLOAD (runnability first) -> OOM_AT_CONTEXT (not runnable
+    at this ctx even with offload, but fully loadable at a short ctx)
+    -> OOM_AT_LOAD.
+    """
+    d = _conservative_demand_at(model, quant, wl, ctx)
+    band = _band_verdict(d, b_with_safety, b_no_safety)
+    if band is Verdict.FITS:
+        return (Verdict.RAM_ONLY if ram_only else Verdict.FITS), None, 0, []
+    if band is Verdict.TIGHT:
+        if ram_only:
+            return Verdict.RAM_ONLY, None, 0, ["RAM_ONLY_TIGHT_HEADROOM"]
+        return Verdict.TIGHT, None, 0, []
+    # over budget at this ctx — A6: try partial offload FIRST
+    if not ram_only and _offload_gate_open(model, quant, b_with_safety):
+        ctx_wl = wl.model_copy(update={"ctx_target_tokens": ctx})
+        g, offload_notes = solve_n_gpu_layers_max(model, quant, ctx_wl,
+                                                  b_with_safety)
+        if g >= 1:
+            spill = ram_spill_bytes(model, quant, g)
+            if spill <= ram_budget:
+                return Verdict.PARTIAL_OFFLOAD, g, spill, offload_notes
+            # A2: the spilled weights have nowhere to live
+            return (Verdict.OOM_AT_LOAD, None, spill,
+                    ["RAM_SPILL_EXCEEDS_AVAILABLE"])
+    # offload infeasible here: ctx problem or load problem?
+    if _conservative_demand_at(model, quant, wl, _CTX_MIN) <= b_no_safety:
+        return Verdict.OOM_AT_CONTEXT, None, 0, []
+    return Verdict.OOM_AT_LOAD, None, 0, []
+
+
 def _tradeoff_curve(model: ModelSpec, quant: QuantVariant, wl: Workload,
                     b_with_safety: int, b_no_safety: int,
                     ram_only: bool, ram_budget: int) -> list[tuple[int, Verdict]]:
-    """SPEC §6.4 — verdict at each sampled ctx, clamped to the model limit.
-    Since S5, over-budget points are refined to PARTIAL_OFFLOAD when at
-    least one layer still fits alongside the (all-on-GPU) KV — and, since
-    A2, only when the spilled weights also fit the RAM pool."""
-    curve: list[tuple[int, Verdict]] = []
-    for ctx in TRADEOFF_CTX_POINTS:
-        if ctx > model.max_position_embeddings:
-            continue
-        d = _conservative_demand_at(model, quant, wl, ctx)
-        band = _band_verdict(d, b_with_safety, b_no_safety)
-        if band is Verdict.OOM_AT_CONTEXT and not ram_only and _offload_gate_open(
-            model, quant, b_with_safety
-        ):
-            ctx_wl = wl.model_copy(update={"ctx_target_tokens": ctx})
-            g, _ = solve_n_gpu_layers_max(model, quant, ctx_wl, b_with_safety)
-            if g >= 1 and ram_spill_bytes(model, quant, g) <= ram_budget:
-                band = Verdict.PARTIAL_OFFLOAD
-        curve.append((ctx, band))
-    return curve
+    """SPEC §6.4 — the A6 shared path evaluated at each sampled ctx."""
+    return [
+        (ctx, _verdict_at(model, quant, wl, ctx, b_with_safety, b_no_safety,
+                          ram_only, ram_budget)[0])
+        for ctx in TRADEOFF_CTX_POINTS
+        if ctx <= model.max_position_embeddings
+    ]
 
 
 def classify_fit(hw: HardwareProfile, model: ModelSpec,
@@ -203,45 +230,23 @@ def classify_fit(hw: HardwareProfile, model: ModelSpec,
         tier, "meaningful only for PARTIAL_OFFLOAD verdicts"
     )
 
-    # 5-6. FITS / TIGHT band (interpretation A, owner-confirmed)
-    band = _band_verdict(demand_cons, b_with_safety, b_no_safety)
-    if band is Verdict.FITS:
-        verdict = Verdict.RAM_ONLY if ram_only_mode else Verdict.FITS
-    elif band is Verdict.TIGHT:
-        verdict = Verdict.RAM_ONLY if ram_only_mode else Verdict.TIGHT
-        if ram_only_mode:
-            flags.append("RAM_ONLY_TIGHT_HEADROOM")
-    # 7. short ctx runs fully but the target does not -> OOM_AT_CONTEXT
-    elif _conservative_demand_at(model, quant, wl, _CTX_MIN) <= b_no_safety:
-        verdict = Verdict.OOM_AT_CONTEXT
-    # 8. at least one layer fits next to A + L -> try partial offload
-    elif not ram_only_mode and _offload_gate_open(model, quant, b_with_safety):
-        g, offload_notes = solve_n_gpu_layers_max(model, quant, wl, b_with_safety)
-        spill = ram_spill_bytes(model, quant, g)
-        if g >= 1 and spill > ram_budget:
-            # A2 (reviewer FA case): the spilled weights have nowhere to
-            # live — claiming "runs, slowly" would be a false accept.
-            verdict = Verdict.OOM_AT_LOAD
-            flags.append("RAM_SPILL_EXCEEDS_AVAILABLE")
-        elif g >= 1:
-            verdict = Verdict.PARTIAL_OFFLOAD
-            flags.append("PARTIAL_OFFLOAD_KV_APPROX")  # SPEC §4.6 mandated
-            flags.extend(n for n in offload_notes if n not in flags)
-            n_gpu_layers = Measured[int](
-                value=g,
-                unit="layers",
-                tier=tier,
-                source=Source.ESTIMATED,
-                notes=["conservative: assumes full KV cache resident on GPU",
-                       f"RAM spill {spill} bytes within pool {ram_budget}"],
-            )
-        else:
-            # KV at the target ctx alone exceeds the budget even with zero
-            # layers on GPU — under the v1 approximation nothing runs.
-            verdict = Verdict.OOM_AT_LOAD
-    # 9. not even one layer fits
-    else:
-        verdict = Verdict.OOM_AT_LOAD
+    # A6: the main verdict IS the shared path at the target ctx — the
+    # invariant verdict == tradeoff_curve[target] holds by construction
+    verdict, g_val, spill, extra = _verdict_at(
+        model, quant, wl, wl.ctx_target_tokens,
+        b_with_safety, b_no_safety, ram_only_mode, ram_budget)
+    flags.extend(n for n in extra if n not in flags)
+    if verdict is Verdict.PARTIAL_OFFLOAD:
+        assert g_val is not None
+        flags.append("PARTIAL_OFFLOAD_KV_APPROX")  # SPEC §4.6 mandated
+        n_gpu_layers = Measured[int](
+            value=g_val,
+            unit="layers",
+            tier=tier,
+            source=Source.ESTIMATED,
+            notes=["conservative: assumes full KV cache resident on GPU",
+                   f"RAM spill {spill} bytes within pool {ram_budget}"],
+        )
 
     return FitResult(
         verdict=verdict,

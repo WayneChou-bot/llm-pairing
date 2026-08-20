@@ -26,6 +26,16 @@ from pydantic import BaseModel, ConfigDict
 _RUNNABLE = ("FITS", "RAM_ONLY")
 
 
+class RecNote(BaseModel):
+    """A structured, renderer-translatable message (review #4: message
+    keys, never full-sentence reverse lookup)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: str
+    params: dict[str, int | str] = {}
+
+
 class RecCandidate(BaseModel):
     """One (model, quant) evaluated at one ctx on one machine."""
 
@@ -43,6 +53,12 @@ class RecCandidate(BaseModel):
     bytes_per_token: float | None
     tps: float | None
     tps_tier: str | None
+    #: review #4 P1: source trust — "official" / "trusted_quantizer" /
+    #: "community". Conservative default: unknown provenance = community.
+    trust: str = "community"
+    #: fit/probe honesty flags for this cell (review #4 P2: the CLI must
+    #: not swallow e.g. NVIDIA_SMI_PARSER_UNVERIFIED_ON_REAL_HW)
+    flags: list[str] = []
 
 
 class Pick(BaseModel):
@@ -51,26 +67,27 @@ class Pick(BaseModel):
     kind: Literal["CAPABILITY", "SPEED", "LONG_CONTEXT"]
     candidate: RecCandidate
     reason: str
-    caveats: list[str] = []
+    caveats: list[str] = []  # message CODES — renderers own the words
 
 
 class RecResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     picks: list[Pick] = []
-    notes: list[str] = []
+    notes: list[RecNote] = []
+
+
+_TRUSTED = ("official", "trusted_quantizer")
 
 
 def _pool(cands: list[RecCandidate], ctx: int) -> tuple[list[RecCandidate], list[str]]:
-    """Runnable candidates at ctx; TIGHT fallback carries a caveat."""
+    """Runnable candidates at ctx; TIGHT fallback carries a caveat code."""
     run = [c for c in cands if c.ctx == ctx and c.verdict in _RUNNABLE]
     if run:
         return run, []
     tight = [c for c in cands if c.ctx == ctx and c.verdict == "TIGHT"]
     if tight:
-        return tight, [
-            "TIGHT：剩餘記憶體低於安全緩衝——其他程式一搶記憶體就可能失敗"
-        ]
+        return tight, ["TIGHT_FALLBACK"]
     return [], []
 
 
@@ -79,16 +96,30 @@ def _by_capability(c: RecCandidate) -> tuple[int, int]:
 
 
 def recommend(cands: list[RecCandidate], *, target_ctx: int = 8_192,
-              long_ctx: int = 32_768) -> RecResult:
+              long_ctx: int = 32_768,
+              include_community: bool = False) -> RecResult:
     picks: list[Pick] = []
-    notes: list[str] = []
+    notes: list[RecNote] = []
+
+    # review #4 P1: community sources are opt-in, never a silent default
+    if not include_community:
+        kept = [c for c in cands if c.trust in _TRUSTED]
+        excluded = len({c.model_id for c in cands}) - len({c.model_id for c in kept})
+        if excluded > 0:
+            notes.append(RecNote(code="COMMUNITY_EXCLUDED",
+                                 params={"count": excluded}))
+        cands = kept
+
+    def _caveats(base: list[str], c: RecCandidate) -> list[str]:
+        out = list(base)
+        if c.trust == "community":
+            out.append("COMMUNITY_SOURCE")
+        return out
 
     pool, pool_caveats = _pool(cands, target_ctx)
     if not pool:
-        notes.append(
-            f"在 context {target_ctx:,} 下，目錄中沒有能完整載入這台機器的"
-            "模型——不勉強推薦（R-2）"
-        )
+        notes.append(RecNote(code="NO_FIT_AT_TARGET",
+                             params={"ctx": target_ctx}))
         return RecResult(picks=[], notes=notes)
 
     # -- capability: largest active params, tie -> larger weights (higher quant)
@@ -98,7 +129,7 @@ def recommend(cands: list[RecCandidate], *, target_ctx: int = 8_192,
         candidate=cap,
         reason=(f"可完整載入的最大模型（active "
                 f"{cap.params_active / 1e9:.1f}B 參數）"),
-        caveats=list(pool_caveats),
+        caveats=_caveats(pool_caveats, cap),
     ))
 
     # -- speed: tps when predicted, else bytes/token physics (relative order)
@@ -111,10 +142,7 @@ def recommend(cands: list[RecCandidate], *, target_ctx: int = 8_192,
         rankable = [c for c in pool if c.bytes_per_token is not None]
         ranked = sorted(rankable, key=lambda c: c.bytes_per_token or 0.0)
         if ranked:
-            speed_caveats.append(
-                "速度為相對排序（依每 token 記憶體流量的物理量）；"
-                "絕對 tok/s 未校準——跑一次 T-003 校準即可升級"
-            )
+            speed_caveats.append("SPEED_RELATIVE_ORDER")
     if ranked:
         distinct = [c for c in ranked if c.model_id != cap.model_id]
         speed = distinct[0] if distinct else ranked[0]
@@ -123,7 +151,7 @@ def recommend(cands: list[RecCandidate], *, target_ctx: int = 8_192,
         picks.append(Pick(
             kind="SPEED", candidate=speed,
             reason=f"可完整載入組合中最快（{tps_txt}）",
-            caveats=speed_caveats,
+            caveats=_caveats(speed_caveats, speed),
         ))
 
     # -- long context: capability ranking at the long ctx point
@@ -134,12 +162,9 @@ def recommend(cands: list[RecCandidate], *, target_ctx: int = 8_192,
             kind="LONG_CONTEXT", candidate=lc,
             reason=(f"在 context {long_ctx:,} 仍可完整載入的最大模型"
                     f"（active {lc.params_active / 1e9:.1f}B）"),
-            caveats=list(long_caveats),
+            caveats=_caveats(long_caveats, lc),
         ))
     else:
-        notes.append(
-            f"context {long_ctx:,}（約 {long_ctx // 1024}K）下沒有可完整"
-            "載入的組合——長文需求請降低 context 或參考矩陣的 trade-off 曲線"
-        )
+        notes.append(RecNote(code="NO_FIT_AT_LONG", params={"ctx": long_ctx}))
 
     return RecResult(picks=picks, notes=notes)

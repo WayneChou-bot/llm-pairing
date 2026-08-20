@@ -41,14 +41,22 @@ CACHE = REPO / "catalog_cache"
 OUT_DIR = REPO / "catalog"
 SLEEP_S = 0.5  # politeness between API calls
 
+#: review #4 P2: the snapshot must disclose when its SOURCES were
+#: fetched, not just when the output file was written
+_FETCH_TIMES: list[str] = []
+REFRESH = False  # --refresh bypasses the provenance cache
+
 
 def _get(url: str, cache_key: str) -> Any:
     """GET with on-disk provenance cache. Failures return None (recorded)."""
     CACHE.mkdir(exist_ok=True)
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", cache_key)[:180]
     cache_file = CACHE / f"{safe}.json"
-    if cache_file.exists():
-        return json.loads(cache_file.read_text(encoding="utf-8"))["body"]
+    if cache_file.exists() and not REFRESH:
+        rec = json.loads(cache_file.read_text(encoding="utf-8"))
+        if rec.get("retrieved_at"):
+            _FETCH_TIMES.append(str(rec["retrieved_at"]))
+        return rec["body"]
     time.sleep(SLEEP_S)
     req = urllib.request.Request(url, headers={"User-Agent": "llm-pairing-catalog/0.1"})
     try:
@@ -62,9 +70,11 @@ def _get(url: str, cache_key: str) -> Any:
     except json.JSONDecodeError:
         print(f"    non-JSON response: {url}", file=sys.stderr)
         return None
+    now = datetime.now(timezone.utc).isoformat()
+    _FETCH_TIMES.append(now)
     cache_file.write_text(json.dumps({
         "url": url,
-        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+        "retrieved_at": now,
         "sha256": hashlib.sha256(raw).hexdigest(),
         "body": body,
     }, ensure_ascii=False), encoding="utf-8")
@@ -147,26 +157,41 @@ def build(repos: list[str]) -> dict[str, Any]:
                 if isinstance(st.get("total"), int):
                     n_params = st["total"]
 
-        model_id = base_id or repo_id
+        # review #4 P1: identity & trust — a derivative (finetune) keeps
+        # its OWN name; only faithful quantized repos display as the base
+        card = detail.get("cardData") or {}
+        rel = card.get("base_model_relation")
+        if isinstance(rel, list):
+            rel = rel[0] if rel else None
+        tags = [t for t in (detail.get("tags") or []) if isinstance(t, str)]
+        src = mapper.classify_source(repo_id, base_id,
+                                     rel if isinstance(rel, str) else None,
+                                     tags)
+        model_id = str(src["model_id"])
         result = mapper.map_config(model_id, cfg, ggufs=ggufs,
                                    n_params_total=n_params)
         if result.spec is None:
             skipped.append({"repo": repo_id, "reason": result.skip_reason or "?"})
             print(f"    skipped: {result.skip_reason}")
             continue
-        card = detail.get("cardData") or {}
         entries.append({
             "spec": json.loads(result.spec.model_dump_json()),
             "meta": {
                 "gguf_repo": repo_id,
                 "config_source": cfg_source,
                 "base_repo": base_id,
+                "publisher": src["publisher"],
+                "relation": src["relation"],
+                "trust": src["trust"],
+                "content_tags": src["content_tags"],
                 "license": card.get("license"),
                 "downloads": detail.get("downloads"),
                 "mapping_notes": result.notes,
                 "artifacts": result.artifacts,
             },
         })
+        print(f"    source: {src['relation']}/{src['trust']}"
+              + (f", tags={src['content_tags']}" if src["content_tags"] else ""))
         print(f"    ok: {result.spec.arch}/{result.spec.arch_handler}, "
               f"{len(result.spec.quants)} quants"
               + (f", notes={result.notes}" if result.notes else ""))
@@ -191,6 +216,8 @@ def build(repos: list[str]) -> dict[str, Any]:
     return {
         "catalog_schema": "1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "sources_fetched_earliest": min(_FETCH_TIMES) if _FETCH_TIMES else None,
+        "sources_fetched_latest": max(_FETCH_TIMES) if _FETCH_TIMES else None,
         "source": "huggingface api (filter=gguf)",
         "entry_count": len(entries),
         "entries": entries,
@@ -198,13 +225,19 @@ def build(repos: list[str]) -> dict[str, Any]:
     }
 
 
-def main() -> int:
+def main() -> int:  # noqa: PLW0603 — REFRESH is a run-scoped switch
     ap = argparse.ArgumentParser(description="LLM pairing catalog builder")
     ap.add_argument("--top", type=int, default=25,
                     help="discover top-N GGUF repos by downloads (default 25)")
     ap.add_argument("--repos", help="comma-separated explicit repo list "
                                     "(skips discovery)")
+    ap.add_argument("--refresh", action="store_true",
+                    help="ignore the provenance cache and re-fetch every "
+                         "source (review #4: cache has no TTL by design; "
+                         "this is the explicit refresh)")
     args = ap.parse_args()
+    global REFRESH
+    REFRESH = args.refresh
 
     repos = ([r.strip() for r in args.repos.split(",")] if args.repos
              else discover_repos(args.top))

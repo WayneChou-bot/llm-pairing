@@ -204,22 +204,24 @@ def predict_decode(hw: HardwareProfile, model: ModelSpec, quant: QuantVariant,
 
     cal_flags: list[str] = []
     if calibration is not None:
+        from llmpairing.predict.calibration import calibration_applies
         scenario_pool = "gpu" if hw.accelerators else "cpu"
-        if calibration.pool == scenario_pool and scenario_pool == "cpu":
+        ok, refusal = calibration_applies(hw, calibration, scenario_pool)
+        if ok and scenario_pool == "cpu":
             return _calibrated_cpu(hw, model, quant, wl, fit, calibration)
-        cal_flags.append("CALIBRATION_POOL_MISMATCH_IGNORED")
+        cal_flags.append(refusal or "CALIBRATION_POOL_MISMATCH_IGNORED")
 
     gpu_bw, ram_bw, bw_tier = _bandwidths(hw, fit)
     partial = fit.verdict is Verdict.PARTIAL_OFFLOAD
 
     if hw.accelerators and gpu_bw is None:
-        return _refusal(hw, ["NO_BANDWIDTH_NO_PREDICTION"],
+        return _refusal(hw, cal_flags + ["NO_BANDWIDTH_NO_PREDICTION"],
                         "bandwidth_source UNKNOWN — 不猜測（§5.1）")
     if not hw.accelerators and ram_bw is None:
-        return _refusal(hw, ["NO_BANDWIDTH_NO_PREDICTION"],
+        return _refusal(hw, cal_flags + ["NO_BANDWIDTH_NO_PREDICTION"],
                         "RAM bandwidth UNKNOWN — 不猜測（§5.1）")
     if partial and ram_bw is None:
-        return _refusal(hw, ["NO_RAM_BANDWIDTH"],
+        return _refusal(hw, cal_flags + ["NO_RAM_BANDWIDTH"],
                         "partial offload 需 RAM 頻寬，UNKNOWN — 不猜測（§5.6）")
 
     flags: list[str] = list(cal_flags)

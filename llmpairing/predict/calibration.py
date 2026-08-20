@@ -10,6 +10,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from llmpairing.schemas import HardwareProfile
+
 
 class MachineCalibration(BaseModel):
     """One machine+pool's measured decode-throughput product with provenance."""
@@ -30,3 +32,17 @@ class MachineCalibration(BaseModel):
     calibration_ctx: int = Field(ge=1)  # prompt + gen/2 approximation (rule 5)
     measured_at_unix: int = Field(ge=0)
     notes: list[str] = []
+
+
+def calibration_applies(hw: HardwareProfile, cal: "MachineCalibration",
+                        scenario_pool: str) -> tuple[bool, str | None]:
+    """Single gate (review #4 P1): a calibration applies ONLY when the
+    pool matches AND the profile's machine fingerprint matches the
+    calibration's machine_id. Returns (applies, refusal_flag)."""
+    if cal.pool != scenario_pool:
+        return False, "CALIBRATION_POOL_MISMATCH_IGNORED"
+    if not hw.machine_id:
+        return False, "CALIBRATION_PROFILE_HAS_NO_MACHINE_ID"
+    if cal.machine_id != hw.machine_id:
+        return False, "CALIBRATION_MACHINE_MISMATCH_IGNORED"
+    return True, None

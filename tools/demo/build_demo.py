@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from llmpairing.budget.available import compute_budget, safety_margin_bytes
+from llmpairing.cli import source_of
 from llmpairing.budget.classify import classify_fit
 from llmpairing.predict.calibration import MachineCalibration
 from llmpairing.predict.decode import decode_bytes_per_token, predict_decode
@@ -94,7 +95,9 @@ def load_models() -> tuple[str, str, list[tuple[ModelSpec, dict[str, Any]]]]:
         for e in data.get("entries", []):
             spec = ModelSpec.model_validate(e["spec"])
             out.append((spec, e.get("meta", {})))
-        return snaps[-1].name, str(data.get("generated_at") or ""), out
+        gen = str(data.get("generated_at") or "")
+        src_latest = str(data.get("sources_fetched_latest") or "")
+        return snaps[-1].name, (gen + "|" + src_latest), out
     fixtures = sorted((FIXTURES / "models").glob("*.json"))  # absent in the
     # public repo: there the catalog snapshot is the only model source
     return "synthetic", "", [
@@ -127,7 +130,13 @@ def build(profile_path: str | None) -> dict[str, Any]:
         for q in shown:
             short = spec.model_id.split("/")[-1]
             art = (meta.get("artifacts") or {}).get(q.label) or {}
+            src = source_of(meta)
             columns.append({
+                "publisher": src.get("publisher"),
+                "trust": src.get("trust"),
+                "relation": src.get("relation"),
+                "tags": src.get("content_tags") or [],
+                "base": meta.get("base_repo"),
                 "id": f"{spec.model_id}::{q.label}",
                 "label": short,
                 "quant": q.label,
@@ -231,6 +240,10 @@ def build(profile_path: str | None) -> dict[str, Any]:
         if not m["real"]:
             continue
         cands: list[RecCandidate] = []
+        meta_of = {f"{spec.model_id}::{q.label}": meta
+                   for spec, meta in model_entries
+                   for q in ([x for x in spec.quants if x.label in PREVIEW_QUANTS]
+                             or spec.quants[:2])}
         for col_id, (spec, q) in col_of.items():
             for ctx in (rec_ctx, rec_long):
                 key = f"{m['id']}|{col_id}|{ctx}|f16"
@@ -242,10 +255,12 @@ def build(profile_path: str | None) -> dict[str, Any]:
                     bpt: float | None = decode_bytes_per_token(spec, q, wl, ctx)
                 except Exception:
                     bpt = None  # unrankable, never guessed (R-2)
+                src = source_of(meta_of.get(col_id) or {})
                 cands.append(RecCandidate(
                     model_id=spec.model_id,
                     label=spec.model_id.split("/")[-1],
                     quant=q.label,
+                    trust=str(src["trust"]),
                     params_active=spec.n_params_active,
                     params_total=spec.n_params_total,
                     weights_bytes=q.file_bytes,
@@ -261,7 +276,8 @@ def build(profile_path: str | None) -> dict[str, Any]:
             "picks": [{
                 "kind": p.kind,
                 "reason": p.reason,
-                "caveats": p.caveats,
+                "caveats": p.caveats,  # message CODES (review #4 i18n)
+                "trust": p.candidate.trust,
                 "key": f"{m['id']}|{p.candidate.model_id}::{p.candidate.quant}"
                        f"|{p.candidate.ctx}|f16",
                 "label": p.candidate.label,
@@ -274,7 +290,8 @@ def build(profile_path: str | None) -> dict[str, Any]:
                 "tps": p.candidate.tps,
                 "tps_tier": p.candidate.tps_tier,
             } for p in rr.picks],
-            "notes": rr.notes,
+            "notes": [{"code": n.code, "params": dict(n.params)}
+                      for n in rr.notes],
         }
 
     try:
@@ -290,7 +307,9 @@ def build(profile_path: str | None) -> dict[str, Any]:
         "ctx_options": CTX_OPTIONS,
         "kv_options": KV_OPTIONS,
         "catalog": snap_name,
-        "catalog_generated_at": generated_at,
+        "catalog_generated_at": generated_at.split("|")[0],
+        "catalog_sources_latest": (generated_at.split("|")[1]
+                                   if "|" in generated_at else ""),
         "commit": commit,
         "combo_count": len(results),
         "results": results,

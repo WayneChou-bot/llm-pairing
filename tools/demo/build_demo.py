@@ -21,7 +21,7 @@ from typing import Any
 from llmpairing.budget.available import compute_budget, safety_margin_bytes
 from llmpairing.cli import source_of
 from llmpairing.budget.classify import classify_fit
-from llmpairing.predict.calibration import MachineCalibration
+from llmpairing.predict.calibration import MachineCalibration, pick_calibration
 from llmpairing.predict.decode import decode_bytes_per_token, predict_decode
 from llmpairing.recommend import RecCandidate, recommend
 from llmpairing.schemas import HardwareProfile, ModelSpec, Workload
@@ -110,19 +110,17 @@ def _m(v: Any) -> Any:
     return None if v is None else v
 
 
-def load_calibration() -> MachineCalibration | None:
-    cals = sorted((REPO / "calibration").glob("*.json"))
-    if not cals:
-        return None
-    return MachineCalibration.model_validate_json(
-        cals[-1].read_text(encoding="utf-8")
-    )
+def load_calibrations() -> list[MachineCalibration]:
+    return [
+        MachineCalibration.model_validate_json(f.read_text(encoding="utf-8"))
+        for f in sorted((REPO / "calibration").glob("*.json"))
+    ]
 
 
 def build(profile_path: str | None) -> dict[str, Any]:
     machines = load_machines(profile_path)
     snap_name, generated_at, model_entries = load_models()
-    calibration = load_calibration()
+    calibrations = load_calibrations()
 
     columns = []
     for spec, meta in model_entries:
@@ -203,7 +201,8 @@ def build(profile_path: str | None) -> dict[str, Any]:
                                 # pool matching is enforced inside predict
                                 t = predict_decode(
                                     hw, spec, q, wl, r,
-                                    calibration=calibration if m["real"] else None,
+                                    calibration=(pick_calibration(hw, calibrations)
+                                                 if m["real"] else None),
                                 )
                             except ValueError:
                                 # V-P5 sentinel: corrupt catalog data for

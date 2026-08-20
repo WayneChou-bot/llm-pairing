@@ -46,3 +46,23 @@ def calibration_applies(hw: HardwareProfile, cal: "MachineCalibration",
     if cal.machine_id != hw.machine_id:
         return False, "CALIBRATION_MACHINE_MISMATCH_IGNORED"
     return True, None
+
+
+def pick_calibration(hw: HardwareProfile,
+                     cals: list["MachineCalibration"],
+                     ) -> "MachineCalibration | None":
+    """Choose which calibration file to hand to predict_decode.
+
+    Field catch 2026-08-20: a stale pre-fingerprint file sorted after
+    the fresh one and won the naive newest-by-name pick — the identity
+    gate then (correctly) refused it, silently costing T1. Prefer the
+    file whose machine_id matches the profile; with no match, return
+    the last one so the gate can refuse with a visible flag.
+    """
+    if not cals:
+        return None
+    if hw.machine_id:
+        for cal in reversed(cals):
+            if cal.machine_id == hw.machine_id:
+                return cal
+    return cals[-1]

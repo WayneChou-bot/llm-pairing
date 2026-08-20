@@ -23,7 +23,7 @@ from typing import Any
 
 from llmpairing.budget.classify import classify_fit
 from llmpairing.catalog.mapper import classify_source
-from llmpairing.predict.calibration import MachineCalibration
+from llmpairing.predict.calibration import MachineCalibration, pick_calibration
 from llmpairing.predict.decode import decode_bytes_per_token, predict_decode
 from llmpairing.recommend import RecCandidate, RecResult, recommend
 from llmpairing.schemas import HardwareProfile, ModelSpec, Workload
@@ -195,12 +195,11 @@ def _load_catalog(catalog_dir: Path) -> tuple[str, list[tuple[ModelSpec, dict[st
     ]
 
 
-def _load_calibration(cal_dir: Path) -> MachineCalibration | None:
-    cals = sorted(cal_dir.glob("*.json"))
-    if not cals:
-        return None
-    return MachineCalibration.model_validate_json(
-        cals[-1].read_text(encoding="utf-8"))
+def _load_calibrations(cal_dir: Path) -> list[MachineCalibration]:
+    return [
+        MachineCalibration.model_validate_json(f.read_text(encoding="utf-8"))
+        for f in sorted(cal_dir.glob("*.json"))
+    ]
 
 
 def _recommend_cmd(args: argparse.Namespace) -> int:
@@ -224,7 +223,7 @@ def _recommend_cmd(args: argparse.Namespace) -> int:
             return 1
 
     catalog_name, entries = _load_catalog(Path(args.catalog_dir))
-    calibration = _load_calibration(Path(args.calibration_dir))
+    calibrations = _load_calibrations(Path(args.calibration_dir))
     repo_of = {spec.model_id: str(meta.get("gguf_repo") or "")
                for spec, meta in entries}
 
@@ -238,9 +237,10 @@ def _recommend_cmd(args: argparse.Namespace) -> int:
 
     print("LLM pairing — 為這台機器推薦（誠實優先：不知道就說不知道）\n")
     for label, scen_hw, is_cpu_pool in scenarios:
-        cal = calibration if (calibration is not None
-                              and calibration.pool == ("cpu" if is_cpu_pool
-                                                       else "gpu")) else None
+        chosen = pick_calibration(scen_hw, calibrations)
+        cal = chosen if (chosen is not None
+                         and chosen.pool == ("cpu" if is_cpu_pool
+                                             else "gpu")) else None
         cands = gather_candidates(scen_hw, entries, calibration=cal,
                                   target_ctx=args.ctx, long_ctx=args.long_ctx)
         rr = recommend(cands, target_ctx=args.ctx, long_ctx=args.long_ctx,

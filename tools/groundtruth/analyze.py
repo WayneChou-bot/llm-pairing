@@ -77,12 +77,14 @@ def _load_profile() -> HardwareProfile | None:
         json.loads(p.read_text(encoding="utf-8")))
 
 
-def _load_calibration() -> MachineCalibration | None:
-    cals = sorted((REPO / "calibration").glob("*.json"))
-    if not cals:
-        return None
-    return MachineCalibration.model_validate_json(
-        cals[-1].read_text(encoding="utf-8"))
+def _load_calibration(hw: HardwareProfile | None) -> MachineCalibration | None:
+    from llmpairing.predict.calibration import pick_calibration
+    cals = [MachineCalibration.model_validate_json(
+                f.read_text(encoding="utf-8"))
+            for f in sorted((REPO / "calibration").glob("*.json"))]
+    if hw is None:
+        return cals[-1] if cals else None
+    return pick_calibration(hw, cals)
 
 
 def _median_iqr(values: list[float]) -> tuple[float, float]:
@@ -212,7 +214,7 @@ def main() -> int:
     path = Path(sys.argv[1])
     snap_name, specs = _load_catalog_specs()
     hw = _load_profile()
-    calibration = _load_calibration()
+    calibration = _load_calibration(hw)
     result = analyze(path, hw=hw, specs=specs, calibration=calibration)
     print(json.dumps(result, indent=2, ensure_ascii=False))
 

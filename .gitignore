@@ -10,3 +10,4 @@ data/groundtruth/*/
 !data/groundtruth/waynechou/
 calibration/
 demo/llm-pairing-demo.html
+my_profile.json

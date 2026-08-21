@@ -21,6 +21,7 @@ WHITELIST = [
     "llmpairing",
     "tools",
     "catalog",
+    "assets",
     "README.md",
     "LICENSE",
     "pyproject.toml",

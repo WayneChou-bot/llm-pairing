@@ -1,10 +1,19 @@
 # LLM pairing
 
+![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
+![mypy](https://img.shields.io/badge/mypy-strict-blue)
+![tests](https://img.shields.io/badge/tests-305%20passed%20(local)-brightgreen)
+[![Live demo](https://img.shields.io/badge/demo-live-orange)](https://waynechou-bot.github.io/llm-pairing/)
+![Platform](https://img.shields.io/badge/platform-Windows%20verified-lightgrey)
+
 Scan your computer and get an honest answer to: **which local LLMs can
 this machine actually run, roughly how fast, and exactly which file
 should I download?**
 
 [繁體中文版在下方](#llm-pairing繁體中文) / Traditional Chinese version below.
+
+[![Interactive demo — pairing matrix with evidence tiers, trust labels and honesty flags](assets/demo-en.png)](https://waynechou-bot.github.io/llm-pairing/)
 
 Core belief: **if we don't know, we say we don't know — we never
 guess.** Every number carries an evidence tier (T0 = spec-sheet
@@ -58,6 +67,30 @@ llmpairing recommend --ctx 32768 # re-rank for long-context use
 
 `recommend` looks for `./catalog` first and falls back to the snapshots
 bundled with the repo checkout, so it works from any directory.
+
+Sample output on the synthetic 64GB reference machine (real run, trimmed;
+CLI text is currently zh-Hant):
+
+```text
+LLM pairing — 為這台機器推薦（誠實優先：不知道就說不知道）
+
+◆ 你的機器
+
+  🏆 能力優先  Qwen3.8-27B
+    Q8_0・27.05 GiB・active 27.8B・context 8,192・可以跑・預估 ~9 tok/s（T0）
+    來源信任：可信量化者
+    $ ollama run hf.co/unsloth/Qwen3.8-27B-GGUF:Q8_0
+
+  ⚡ 速度優先  Qwen3-Coder-30B-A3B-Instruct
+    Q4_K_M・17.28 GiB・active 3.4B・context 8,192・可以跑・預估 ~91 tok/s（T0）
+    來源信任：可信量化者
+    $ ollama run hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M
+
+  · 已排除 5 個社群來源模型（--include-community 可納入）
+
+  目錄：catalog-20260820T125738Z-bfc6898f.json・記憶體判定 T0（規格估算）
+  ・速度 未經本機校準（可跑 T-003 校準升級）
+```
 
 Going further (run from the repo root):
 
@@ -162,6 +195,29 @@ llmpairing recommend --ctx 32768 # 長文條件下重新推薦
 
 `recommend` 會先找目前目錄的 `./catalog`，找不到就退回 repo 內建的
 快照，所以在任何目錄執行都可以。
+
+合成 64GB 參考機的實際輸出（真實執行、節錄）：
+
+```text
+LLM pairing — 為這台機器推薦（誠實優先：不知道就說不知道）
+
+◆ 你的機器
+
+  🏆 能力優先  Qwen3.8-27B
+    Q8_0・27.05 GiB・active 27.8B・context 8,192・可以跑・預估 ~9 tok/s（T0）
+    來源信任：可信量化者
+    $ ollama run hf.co/unsloth/Qwen3.8-27B-GGUF:Q8_0
+
+  ⚡ 速度優先  Qwen3-Coder-30B-A3B-Instruct
+    Q4_K_M・17.28 GiB・active 3.4B・context 8,192・可以跑・預估 ~91 tok/s（T0）
+    來源信任：可信量化者
+    $ ollama run hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M
+
+  · 已排除 5 個社群來源模型（--include-community 可納入）
+
+  目錄：catalog-20260820T125738Z-bfc6898f.json・記憶體判定 T0（規格估算）
+  ・速度 未經本機校準（可跑 T-003 校準升級）
+```
 
 進一步（都在 repo 根目錄執行）：
 
